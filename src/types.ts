@@ -78,4 +78,31 @@ export interface PlayerState {
   colorTheme: string;
   unlockedUpgrades: string[];
   equippedUpgrades: Record<string, boolean>;
+  gameLevel: number;
+}
+
+export type LevelMode = 'clear' | 'defend';
+
+export interface LevelConfig {
+  number: number;
+  mode: LevelMode;
+  enemyCount: number;
+  enemyHp: number;
+  enemyScale: number;
+  enemySpeed: number;
+  throwInterval: number;
+  duration: number; // secondes (mode défense)
+  castleHp: number;
+  title: string;
+  hint: string;
+}
+
+export interface LevelProgress {
+  level: number;
+  mode: LevelMode;
+  killed: number;
+  total: number;
+  timeLeft: number;
+  castleHp: number;
+  castleMaxHp: number;
 }

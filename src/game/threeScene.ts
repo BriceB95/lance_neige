@@ -1,12 +1,40 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { playSnowScoop, playSnowballShoot, playSplat, playRobotBoop } from '../audio/soundEffects';
-import { TerrainTheme } from '../types';
+import { playSnowScoop, playSnowballShoot, playSplat, playRobotBoop, playSuccessChime } from '../audio/soundEffects';
+import { LevelConfig, LevelProgress, TerrainTheme } from '../types';
 
 export interface SceneCallbacks {
   onCollectSnow: (amount: number) => void;
   onHitEnemy: (scoreGain: number, isDouble?: boolean) => void;
   onRobotDamaged?: (amount: number) => void;
+  onCollectHeart?: () => void;
+  onLevelProgress?: (progress: LevelProgress) => void;
+  onLevelComplete?: () => void;
+  onLevelFailed?: (reason: 'castle') => void;
+}
+
+const CASTLE_RADIUS = 2.6;
+
+/**
+ * Point le plus proche d'un segment (trajectoire d'une boule pendant une frame)
+ * par rapport à l'axe vertical d'un cylindre placé en (cx, cz).
+ */
+function sweepCylinder(
+  x0: number, y0: number, z0: number,
+  x1: number, y1: number, z1: number,
+  cx: number, cz: number
+) {
+  const sx = x1 - x0;
+  const sz = z1 - z0;
+  const lenSq = sx * sx + sz * sz;
+  let t = lenSq > 0 ? ((cx - x0) * sx + (cz - z0) * sz) / lenSq : 0;
+  t = Math.max(0, Math.min(1, t));
+  const x = x0 + sx * t;
+  const z = z0 + sz * t;
+  const y = y0 + (y1 - y0) * t;
+  const dx = cx - x;
+  const dz = cz - z;
+  return { dist: Math.sqrt(dx * dx + dz * dz), x, y, z };
 }
 
 // Math helpers pre-allocated at module scope to avoid GC in animation loop
@@ -26,9 +54,6 @@ export interface SnowPile {
 export interface SnowmanEnemy {
   group: THREE.Group;
   head: THREE.Mesh;
-  carrot: THREE.Mesh;
-  hat: THREE.Group;
-  arms: THREE.Group;
   hpPips: THREE.Mesh[];
   x: number;
   z: number;
@@ -37,10 +62,31 @@ export interface SnowmanEnemy {
   wobblePhase: number;
   health: number;
   maxHealth: number;
-  state: 'idle' | 'hit' | 'throw' | 'burst';
+  scale: number;
+  speed: number;
+  state: 'idle' | 'hit';
   stateTimer: number;
-  respawnTimer: number;
   throwCooldown: number;
+  attackCooldown: number;
+}
+
+export interface HeartPickup {
+  group: THREE.Group;
+  heart: THREE.Mesh;
+  x: number;
+  z: number;
+  life: number;
+  scale: number;
+}
+
+export interface Debris {
+  obj: THREE.Object3D;
+  vx: number;
+  vy: number;
+  vz: number;
+  spin: number;
+  life: number;
+  baseScale: number;
 }
 
 export interface Projectile {
@@ -95,6 +141,27 @@ export class RoboNeigeScene {
   private particles: SplatParticle[] = [];
   private snowParticlesInstanced: THREE.InstancedMesh | null = null;
   private snowParticleMatrices: THREE.Matrix4[] = [];
+  private hearts: HeartPickup[] = [];
+  private debris: Debris[] = [];
+  private castle: THREE.Group | null = null;
+  private snowmanAssets: Record<string, any> | null = null;
+  private heartAssets: Record<string, any> | null = null;
+
+  // Level State
+  private level: LevelConfig | null = null;
+  private levelState = {
+    killed: 0,
+    spawned: 0,
+    spawnTimer: 0,
+    timeLeft: 0,
+    castleHp: 0,
+    finished: false,
+    finishTimer: 0,
+  };
+  private heartTimer = 8;
+  private hurtCooldown = 0;
+  private paused = false;
+  private lastProgressKey = '';
 
   // Robot State
   public robotX = 0;
@@ -172,9 +239,6 @@ export class RoboNeigeScene {
 
     // Populate Snow Piles
     this.createSnowPiles(14);
-
-    // Populate Snowmen Enemies
-    this.createSnowmen(5);
 
     // Create Ambient Falling Snowflakes
     this.createAmbientSnowfall();
@@ -772,141 +836,381 @@ export class RoboNeigeScene {
     }
   }
 
-  private createSnowmen(count: number) {
-    const snowMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.6 });
-    const coalMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 });
-    const carrotMat = new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.5 });
-    const hatMat = new THREE.MeshStandardMaterial({ color: 0xd946ef, roughness: 0.4 }); // colorful pink/purple
-
-    for (let i = 0; i < count; i++) {
-      const group = new THREE.Group();
-
-      // Bottom sphere
-      const baseGeo = new THREE.SphereGeometry(1.0, 14, 12);
-      const base = new THREE.Mesh(baseGeo, snowMat);
-      base.position.y = 0.9;
-      base.castShadow = !this.isSoftwareGl;
-      group.add(base);
-
-      // Middle sphere
-      const midGeo = new THREE.SphereGeometry(0.75, 12, 10);
-      const mid = new THREE.Mesh(midGeo, snowMat);
-      mid.position.y = 2.1;
-      mid.castShadow = !this.isSoftwareGl;
-      group.add(mid);
-
-      // Head sphere
-      const headGeo = new THREE.SphereGeometry(0.55, 12, 10);
-      const head = new THREE.Mesh(headGeo, snowMat);
-      head.position.y = 3.0;
-      head.castShadow = !this.isSoftwareGl;
-      group.add(head);
-
-      // Carrot nose
-      const carrotGeo = new THREE.ConeGeometry(0.12, 0.6, 8);
-      const carrot = new THREE.Mesh(carrotGeo, carrotMat);
-      carrot.rotation.x = Math.PI / 2;
-      carrot.position.set(0, 3.0, 0.65);
-      group.add(carrot);
-
-      // Coal Eyes
-      const eyeGeo = new THREE.SphereGeometry(0.08, 6, 6);
-      const eyeL = new THREE.Mesh(eyeGeo, coalMat);
-      eyeL.position.set(-0.2, 3.15, 0.46);
-      group.add(eyeL);
-      const eyeR = new THREE.Mesh(eyeGeo, coalMat);
-      eyeR.position.set(0.2, 3.15, 0.46);
-      group.add(eyeR);
-
-      // Cute Beanie Hat
-      const hatGroup = new THREE.Group();
-      const hatBaseGeo = new THREE.CylinderGeometry(0.48, 0.52, 0.45, 10);
-      const hatBase = new THREE.Mesh(hatBaseGeo, hatMat);
-      hatBase.position.y = 3.5;
-      hatGroup.add(hatBase);
-
-      const pompomGeo = new THREE.SphereGeometry(0.2, 8, 8);
-      const pompom = new THREE.Mesh(pompomGeo, snowMat);
-      pompom.position.y = 3.8;
-      hatGroup.add(pompom);
-      group.add(hatGroup);
-
-      // Twig arms
-      const armsGroup = new THREE.Group();
-      const armGeo = new THREE.CylinderGeometry(0.06, 0.06, 1.1, 6);
-      const woodMat = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.9 });
-
-      const armL = new THREE.Mesh(armGeo, woodMat);
-      armL.rotation.z = Math.PI / 3;
-      armL.position.set(-1.0, 2.2, 0);
-      armsGroup.add(armL);
-
-      const armR = new THREE.Mesh(armGeo, woodMat);
-      armR.rotation.z = -Math.PI / 3;
-      armR.position.set(1.0, 2.2, 0);
-      armsGroup.add(armR);
-      group.add(armsGroup);
-
-      // Contact shadow
-      const shadowGeo = new THREE.CircleGeometry(1.1, 12);
-      const shadowMat = new THREE.MeshBasicMaterial({
+  private getSnowmanAssets() {
+    if (this.snowmanAssets) return this.snowmanAssets;
+    this.snowmanAssets = {
+      baseGeo: new THREE.SphereGeometry(1.0, 14, 12),
+      midGeo: new THREE.SphereGeometry(0.75, 12, 10),
+      headGeo: new THREE.SphereGeometry(0.55, 12, 10),
+      carrotGeo: new THREE.ConeGeometry(0.12, 0.6, 8),
+      eyeGeo: new THREE.SphereGeometry(0.08, 6, 6),
+      hatBaseGeo: new THREE.CylinderGeometry(0.48, 0.52, 0.45, 10),
+      pompomGeo: new THREE.SphereGeometry(0.2, 8, 8),
+      armGeo: new THREE.CylinderGeometry(0.06, 0.06, 1.1, 6),
+      shadowGeo: new THREE.CircleGeometry(1.1, 12),
+      pipGeo: new THREE.SphereGeometry(0.16, 8, 8),
+      snowMat: new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.6 }),
+      coalMat: new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 }),
+      carrotMat: new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.5 }),
+      hatMat: new THREE.MeshStandardMaterial({ color: 0xd946ef, roughness: 0.4 }),
+      woodMat: new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.9 }),
+      shadowMat: new THREE.MeshBasicMaterial({
         color: 0x64748b,
         transparent: true,
         opacity: 0.35,
         depthWrite: false,
+      }),
+      pipMat: new THREE.MeshStandardMaterial({
+        color: 0x38bdf8,
+        emissive: 0x0284c7,
+        emissiveIntensity: 0.9,
+        roughness: 0.2,
+      }),
+    };
+    return this.snowmanAssets;
+  }
+
+  private createSnowman(cfg: LevelConfig, x: number, z: number): SnowmanEnemy {
+    const a = this.getSnowmanAssets();
+    const shadows = !this.isSoftwareGl;
+    const group = new THREE.Group();
+
+    const base = new THREE.Mesh(a.baseGeo, a.snowMat);
+    base.position.y = 0.9;
+    base.castShadow = shadows;
+    group.add(base);
+
+    const mid = new THREE.Mesh(a.midGeo, a.snowMat);
+    mid.position.y = 2.1;
+    mid.castShadow = shadows;
+    group.add(mid);
+
+    const head = new THREE.Mesh(a.headGeo, a.snowMat);
+    head.position.y = 3.0;
+    head.castShadow = shadows;
+    group.add(head);
+
+    const carrot = new THREE.Mesh(a.carrotGeo, a.carrotMat);
+    carrot.rotation.x = Math.PI / 2;
+    carrot.position.set(0, 3.0, 0.65);
+    group.add(carrot);
+
+    const eyeL = new THREE.Mesh(a.eyeGeo, a.coalMat);
+    eyeL.position.set(-0.2, 3.15, 0.46);
+    group.add(eyeL);
+    const eyeR = new THREE.Mesh(a.eyeGeo, a.coalMat);
+    eyeR.position.set(0.2, 3.15, 0.46);
+    group.add(eyeR);
+
+    const hatGroup = new THREE.Group();
+    const hatBase = new THREE.Mesh(a.hatBaseGeo, a.hatMat);
+    hatBase.position.y = 3.5;
+    hatGroup.add(hatBase);
+    const pompom = new THREE.Mesh(a.pompomGeo, a.snowMat);
+    pompom.position.y = 3.8;
+    hatGroup.add(pompom);
+    group.add(hatGroup);
+
+    const armsGroup = new THREE.Group();
+    const armL = new THREE.Mesh(a.armGeo, a.woodMat);
+    armL.rotation.z = Math.PI / 3;
+    armL.position.set(-1.0, 2.2, 0);
+    armsGroup.add(armL);
+    const armR = new THREE.Mesh(a.armGeo, a.woodMat);
+    armR.rotation.z = -Math.PI / 3;
+    armR.position.set(1.0, 2.2, 0);
+    armsGroup.add(armR);
+    group.add(armsGroup);
+
+    const contactShadow = new THREE.Mesh(a.shadowGeo, a.shadowMat);
+    contactShadow.rotation.x = -Math.PI / 2;
+    contactShadow.position.y = 0.02;
+    contactShadow.userData.noDebris = true;
+    group.add(contactShadow);
+
+    // Pastilles de vie au-dessus du chapeau (une par point de vie)
+    const hpGroup = new THREE.Group();
+    hpGroup.position.set(0, 4.25, 0);
+    hpGroup.userData.noDebris = true;
+    const hpPips: THREE.Mesh[] = [];
+    const spacing = 0.38;
+    for (let pIdx = 0; pIdx < cfg.enemyHp; pIdx++) {
+      const pip = new THREE.Mesh(a.pipGeo, a.pipMat);
+      pip.position.set((pIdx - (cfg.enemyHp - 1) / 2) * spacing, 0, 0);
+      hpGroup.add(pip);
+      hpPips.push(pip);
+    }
+    group.add(hpGroup);
+
+    group.scale.setScalar(cfg.enemyScale);
+    group.position.set(x, 0, z);
+    this.scene.add(group);
+
+    const angle = Math.random() * Math.PI * 2;
+    return {
+      group,
+      head,
+      hpPips,
+      x,
+      z,
+      vx: Math.cos(angle) * cfg.enemySpeed * 0.6,
+      vz: Math.sin(angle) * cfg.enemySpeed * 0.6,
+      wobblePhase: Math.random() * Math.PI * 2,
+      health: cfg.enemyHp,
+      maxHealth: cfg.enemyHp,
+      scale: cfg.enemyScale,
+      speed: cfg.enemySpeed,
+      state: 'idle',
+      stateTimer: 0,
+      throwCooldown: 2 + Math.random() * cfg.throwInterval,
+      attackCooldown: 1,
+    };
+  }
+
+  private createCastle(): THREE.Group {
+    const castle = new THREE.Group();
+    const shadows = !this.isSoftwareGl;
+    const stoneMat = new THREE.MeshStandardMaterial({ color: 0xe0f2fe, roughness: 0.5 });
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0xec4899, roughness: 0.4 });
+    const doorMat = new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.8 });
+    const flagMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.4, side: THREE.DoubleSide });
+
+    const keep = new THREE.Mesh(new THREE.BoxGeometry(3, 2.6, 3), stoneMat);
+    keep.position.y = 1.3;
+    keep.castShadow = shadows;
+    keep.receiveShadow = shadows;
+    castle.add(keep);
+
+    const keepRoof = new THREE.Mesh(new THREE.ConeGeometry(1.4, 1.6, 4), roofMat);
+    keepRoof.position.y = 3.4;
+    keepRoof.rotation.y = Math.PI / 4;
+    castle.add(keepRoof);
+
+    const towerGeo = new THREE.CylinderGeometry(0.6, 0.65, 3.4, 12);
+    const roofGeo = new THREE.ConeGeometry(0.8, 1.3, 12);
+    for (const [tx, tz] of [[-1.5, -1.5], [1.5, -1.5], [-1.5, 1.5], [1.5, 1.5]]) {
+      const tower = new THREE.Mesh(towerGeo, stoneMat);
+      tower.position.set(tx, 1.7, tz);
+      tower.castShadow = shadows;
+      castle.add(tower);
+      const roof = new THREE.Mesh(roofGeo, roofMat);
+      roof.position.set(tx, 4.05, tz);
+      castle.add(roof);
+    }
+
+    const door = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.4, 0.1), doorMat);
+    door.position.set(0, 0.7, 1.52);
+    castle.add(door);
+
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.4, 6), doorMat);
+    pole.position.set(0, 4.8, 0);
+    castle.add(pole);
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.5), flagMat);
+    flag.position.set(0.4, 5.25, 0);
+    castle.add(flag);
+
+    return castle;
+  }
+
+  private createHeartGeometry(): THREE.BufferGeometry {
+    const s = new THREE.Shape();
+    s.moveTo(0, -0.5);
+    s.bezierCurveTo(-0.1, -0.35, -0.6, -0.15, -0.6, 0.15);
+    s.bezierCurveTo(-0.6, 0.45, -0.3, 0.6, 0, 0.35);
+    s.bezierCurveTo(0.3, 0.6, 0.6, 0.45, 0.6, 0.15);
+    s.bezierCurveTo(0.6, -0.15, 0.1, -0.35, 0, -0.5);
+    const geo = new THREE.ExtrudeGeometry(s, {
+      depth: 0.25,
+      bevelEnabled: true,
+      bevelThickness: 0.08,
+      bevelSize: 0.08,
+      bevelSegments: 3,
+      curveSegments: 12,
+    });
+    geo.center();
+    return geo;
+  }
+
+  private spawnHeart() {
+    if (!this.heartAssets) {
+      this.heartAssets = {
+        geo: this.createHeartGeometry(),
+        mat: new THREE.MeshStandardMaterial({
+          color: 0xf43f5e,
+          emissive: 0xe11d48,
+          emissiveIntensity: 0.6,
+          roughness: 0.3,
+        }),
+        ringGeo: new THREE.RingGeometry(0.7, 1.0, 24),
+        ringMat: new THREE.MeshBasicMaterial({
+          color: 0xfb7185,
+          transparent: true,
+          opacity: 0.6,
+          depthWrite: false,
+        }),
+      };
+    }
+    const a = this.heartAssets;
+
+    // Position libre : loin du château et des bords
+    let x = 0;
+    let z = 0;
+    for (let tries = 0; tries < 10; tries++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 4 + Math.random() * 14;
+      x = Math.cos(angle) * dist;
+      z = Math.sin(angle) * dist;
+      if (!this.castle || Math.sqrt(x * x + z * z) > CASTLE_RADIUS + 2) break;
+    }
+
+    const group = new THREE.Group();
+    const heart = new THREE.Mesh(a.geo, a.mat);
+    heart.scale.setScalar(1.3);
+    heart.position.y = 1.3;
+    group.add(heart);
+    const ring = new THREE.Mesh(a.ringGeo, a.ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.05;
+    group.add(ring);
+    group.position.set(x, 0, z);
+    this.scene.add(group);
+
+    this.hearts.push({ group, heart, x, z, life: 18, scale: 0.1 });
+    playRobotBoop();
+  }
+
+  private removeHeart(index: number) {
+    this.scene.remove(this.hearts[index].group);
+    this.hearts.splice(index, 1);
+  }
+
+  private clearLevelObjects() {
+    for (const enemy of this.enemies) this.scene.remove(enemy.group);
+    this.enemies = [];
+    for (const d of this.debris) this.scene.remove(d.obj);
+    this.debris = [];
+    for (let i = this.hearts.length - 1; i >= 0; i--) this.removeHeart(i);
+    for (const p of this.projectiles) {
+      this.scene.remove(p.mesh);
+      p.mesh.geometry.dispose();
+      (p.mesh.material as THREE.Material).dispose();
+    }
+    this.projectiles = [];
+    if (this.castle) {
+      this.scene.remove(this.castle);
+      this.castle.traverse((c) => {
+        if (c instanceof THREE.Mesh) {
+          c.geometry.dispose();
+          (c.material as THREE.Material).dispose();
+        }
       });
-      const contactShadow = new THREE.Mesh(shadowGeo, shadowMat);
-      contactShadow.rotation.x = -Math.PI / 2;
-      contactShadow.position.y = 0.02;
-      group.add(contactShadow);
+      this.castle = null;
+    }
+  }
 
-      // 3 HP visual pips above snowman hat
-      const hpGroup = new THREE.Group();
-      hpGroup.position.set(0, 4.25, 0);
-      const pipGeo = new THREE.SphereGeometry(0.18, 8, 8);
-      const hpPips: THREE.Mesh[] = [];
-      for (let pIdx = 0; pIdx < 3; pIdx++) {
-        const pipMat = new THREE.MeshStandardMaterial({
-          color: 0x38bdf8,
-          emissive: 0x0284c7,
-          emissiveIntensity: 0.9,
-          roughness: 0.2,
-        });
-        const pip = new THREE.Mesh(pipGeo, pipMat);
-        pip.position.set((pIdx - 1) * 0.45, 0, 0);
-        hpGroup.add(pip);
-        hpPips.push(pip);
+  /**
+   * Démarre (ou redémarre) un niveau depuis le début
+   */
+  public startLevel(cfg: LevelConfig) {
+    this.clearLevelObjects();
+    this.level = cfg;
+    this.levelState = {
+      killed: 0,
+      spawned: 0,
+      spawnTimer: 1.5,
+      timeLeft: cfg.duration,
+      castleHp: cfg.castleHp,
+      finished: false,
+      finishTimer: 0,
+    };
+    this.heartTimer = 8;
+    this.hurtCooldown = 0;
+    this.robotGroup.visible = true;
+    this.lastProgressKey = '';
+
+    if (cfg.mode === 'defend') {
+      this.castle = this.createCastle();
+      this.scene.add(this.castle);
+      this.robotX = 0;
+      this.robotZ = 6;
+    } else {
+      this.robotX = 0;
+      this.robotZ = 0;
+      for (let i = 0; i < cfg.enemyCount; i++) {
+        const angle = (i / cfg.enemyCount) * Math.PI * 2 + 0.4;
+        const dist = 9 + Math.random() * 8;
+        this.enemies.push(this.createSnowman(cfg, Math.cos(angle) * dist, Math.sin(angle) * dist));
+        this.levelState.spawned++;
       }
-      group.add(hpGroup);
+    }
+    this.robotRotation = 0;
+    this.targetRotation = 0;
+    this.emitProgress(true);
+  }
 
-      // Position in outer arena
-      const angle = (i / count) * Math.PI * 2 + 0.4;
-      const dist = 9 + Math.random() * 8;
-      const x = Math.cos(angle) * dist;
-      const z = Math.sin(angle) * dist;
-      group.position.set(x, 0, z);
+  public setPaused(paused: boolean) {
+    this.paused = paused;
+  }
 
-      this.scene.add(group);
-      this.enemies.push({
-        group,
-        head,
-        carrot,
-        hat: hatGroup,
-        arms: armsGroup,
-        hpPips,
-        x,
-        z,
-        vx: (Math.random() - 0.5) * 1.5,
-        vz: (Math.random() - 0.5) * 1.5,
-        wobblePhase: Math.random() * Math.PI * 2,
-        health: 3,
-        maxHealth: 3,
-        state: 'idle',
-        stateTimer: 0,
-        respawnTimer: 0,
-        throwCooldown: 3 + Math.random() * 4,
+  private emitProgress(force = false) {
+    if (!this.level || !this.callbacks.onLevelProgress) return;
+    const st = this.levelState;
+    const progress: LevelProgress = {
+      level: this.level.number,
+      mode: this.level.mode,
+      killed: st.killed,
+      total: this.level.enemyCount,
+      timeLeft: Math.ceil(st.timeLeft),
+      castleHp: Math.max(0, Math.round(st.castleHp)),
+      castleMaxHp: this.level.castleHp,
+    };
+    const key = `${progress.level}|${progress.killed}|${progress.timeLeft}|${progress.castleHp}`;
+    if (!force && key === this.lastProgressKey) return;
+    this.lastProgressKey = key;
+    this.callbacks.onLevelProgress(progress);
+  }
+
+  private damageRobot(amount: number) {
+    if (this.hurtCooldown > 0) return;
+    this.hurtCooldown = 0.8;
+    this.callbacks.onRobotDamaged?.(this.hasShield ? Math.ceil(amount / 2) : amount);
+  }
+
+  /**
+   * Éclatement : le bonhomme se disloque en morceaux qui volent
+   */
+  private burstSnowman(index: number) {
+    const enemy = this.enemies[index];
+    this.enemies.splice(index, 1);
+
+    const parts = [...enemy.group.children];
+    for (const part of parts) {
+      if (part.userData.noDebris) continue;
+      this.scene.attach(part);
+      const dx = part.position.x - enemy.x;
+      const dz = part.position.z - enemy.z;
+      const len = Math.sqrt(dx * dx + dz * dz) || 1;
+      const out = 3 + Math.random() * 4;
+      this.debris.push({
+        obj: part,
+        vx: (dx / len) * out + (Math.random() - 0.5) * 3,
+        vy: 4 + Math.random() * 5,
+        vz: (dz / len) * out + (Math.random() - 0.5) * 3,
+        spin: (Math.random() - 0.5) * 12,
+        life: 1.2,
+        baseScale: part.scale.x,
       });
     }
+    this.scene.remove(enemy.group);
+
+    playSplat();
+    this.spawnSnowSplats(enemy.x, 1.6 * enemy.scale, enemy.z, 45, 0xffffff);
+    this.spawnSnowSplats(enemy.x, 2.6 * enemy.scale, enemy.z, 18, 0xf97316);
+    this.spawnSnowSplats(enemy.x, 3.2 * enemy.scale, enemy.z, 16, 0xd946ef);
+
+    this.levelState.killed++;
+    this.callbacks.onHitEnemy(150, true);
+    this.emitProgress();
   }
 
   private createAmbientSnowfall() {
@@ -935,7 +1239,7 @@ export class RoboNeigeScene {
    * Move robot with joystick / arrow inputs
    */
   public moveRobot(dx: number, dz: number, dt: number) {
-    if (dx === 0 && dz === 0) return;
+    if (this.paused || (dx === 0 && dz === 0)) return;
 
     const length = Math.sqrt(dx * dx + dz * dz);
     const nx = dx / length;
@@ -946,12 +1250,7 @@ export class RoboNeigeScene {
     this.robotZ += nz * speed;
 
     // Arena boundary clamp
-    const maxRadius = 22;
-    const curDist = Math.sqrt(this.robotX * this.robotX + this.robotZ * this.robotZ);
-    if (curDist > maxRadius) {
-      this.robotX = (this.robotX / curDist) * maxRadius;
-      this.robotZ = (this.robotZ / curDist) * maxRadius;
-    }
+    this.clampRobot();
 
     // Target rotation based on movement direction
     this.targetRotation = Math.atan2(nx, nz);
@@ -991,6 +1290,7 @@ export class RoboNeigeScene {
    * Manual scoop button
    */
   public scoopSnowManually(): boolean {
+    if (this.paused) return false;
     playRobotBoop();
     return this.checkSnowPickup();
   }
@@ -999,6 +1299,7 @@ export class RoboNeigeScene {
    * Launch snowball from robot cannon
    */
   public fireSnowball(): boolean {
+    if (this.paused || !this.level) return false;
     playSnowballShoot();
 
     // Recoil animation on cannon
@@ -1189,6 +1490,91 @@ export class RoboNeigeScene {
     _vec3A.set(this.robotX, 1.6, this.robotZ);
     this.camera.lookAt(_vec3A);
 
+    if (this.paused || !this.level) {
+      this.updateParticles(delta);
+      return;
+    }
+
+    // Clignotement du robot quand il est touché
+    if (this.hurtCooldown > 0) {
+      this.hurtCooldown -= delta;
+      this.robotGroup.visible = this.hurtCooldown <= 0 || Math.floor(time * 16) % 2 === 0;
+    }
+
+    // 3. Logique du niveau, bonshommes, cœurs
+    this.updateLevel(delta);
+    this.updateEnemies(delta);
+    this.updateHearts(delta, time);
+    this.updateDebris(delta);
+
+    // 4. Update Projectiles
+    for (let i = this.projectiles.length - 1; i >= 0; i--) {
+      const p = this.projectiles[i];
+      p.life -= delta;
+
+      const x0 = p.mesh.position.x;
+      const y0 = p.mesh.position.y;
+      const z0 = p.mesh.position.z;
+      p.mesh.position.x += p.vx * delta;
+      p.mesh.position.y += p.vy * delta;
+      p.mesh.position.z += p.vz * delta;
+      p.vy -= 9.8 * delta * 0.6; // gravity
+      const x1 = p.mesh.position.x;
+      const y1 = p.mesh.position.y;
+      const z1 = p.mesh.position.z;
+
+      let remove = false;
+
+      if (p.isPlayer) {
+        // Détection balayée sur toute la trajectoire de la frame (aucun tir ne traverse)
+        for (let e = 0; e < this.enemies.length; e++) {
+          const enemy = this.enemies[e];
+          const hit = sweepCylinder(x0, y0, z0, x1, y1, z1, enemy.x, enemy.z);
+          const radius = 1.3 * enemy.scale + p.radius;
+          if (hit.dist > radius || hit.y < -0.2 || hit.y > 4.1 * enemy.scale) continue;
+
+          remove = true;
+          enemy.health -= 1;
+          enemy.hpPips.forEach((pip, idx) => {
+            pip.visible = idx < enemy.health;
+          });
+
+          if (enemy.health <= 0) {
+            this.burstSnowman(e);
+          } else {
+            enemy.state = 'hit';
+            enemy.stateTimer = 0.5;
+            playSplat();
+            this.spawnSnowSplats(hit.x, hit.y, hit.z, 18, 0x38bdf8);
+            this.callbacks.onHitEnemy(50, this.cannonTier >= 2);
+          }
+          break;
+        }
+      } else {
+        const hit = sweepCylinder(x0, y0, z0, x1, y1, z1, this.robotX, this.robotZ);
+        if (hit.dist < 1.3 && hit.y < 3.2) {
+          remove = true;
+          playSplat();
+          this.spawnSnowSplats(this.robotX, 1.5, this.robotZ, 14, 0xffffff);
+          this.damageRobot(15);
+        }
+      }
+
+      if (!remove && (p.life <= 0 || y1 <= 0.2)) {
+        remove = true;
+        this.spawnSnowSplats(x1, 0.2, z1, 8, 0xffffff);
+      }
+
+      if (remove) {
+        this.scene.remove(p.mesh);
+        p.mesh.geometry.dispose();
+        (p.mesh.material as THREE.Material).dispose();
+        this.projectiles.splice(i, 1);
+      }
+    }
+
+    this.updateParticles(delta);
+
     // 2. Snow piles animation and respawn timers
     for (const pile of this.snowPiles) {
       if (!pile.active) {
@@ -1210,175 +1596,6 @@ export class RoboNeigeScene {
           sparkle.rotation.y = time * 2;
           sparkle.position.y = 0.75 + Math.sin(time * 3 + pile.x) * 0.12;
         }
-      }
-    }
-
-    // 3. Snowmen Enemies AI & silly animations
-    for (const enemy of this.enemies) {
-      enemy.wobblePhase += delta * 3;
-
-      if (enemy.state === 'idle') {
-        // Silly idle wobble
-        enemy.group.rotation.z = Math.sin(enemy.wobblePhase) * 0.12;
-        enemy.group.rotation.x = Math.cos(enemy.wobblePhase * 0.8) * 0.08;
-        enemy.head.rotation.y = Math.sin(enemy.wobblePhase * 1.5) * 0.25;
-
-        // Roam slowly
-        enemy.x += enemy.vx * delta;
-        enemy.z += enemy.vz * delta;
-
-        // Bounce back if too far
-        const dist = Math.sqrt(enemy.x * enemy.x + enemy.z * enemy.z);
-        if (dist > 21) {
-          enemy.vx = -enemy.vx;
-          enemy.vz = -enemy.vz;
-        }
-
-        enemy.group.position.set(enemy.x, 0, enemy.z);
-
-        // Friendly snowball toss at player if close
-        enemy.throwCooldown -= delta;
-        const dxToPlayer = this.robotX - enemy.x;
-        const dzToPlayer = this.robotZ - enemy.z;
-        const distToPlayer = Math.sqrt(dxToPlayer * dxToPlayer + dzToPlayer * dzToPlayer);
-
-        if (distToPlayer < 14 && enemy.throwCooldown <= 0) {
-          enemy.throwCooldown = 5.0 + Math.random() * 3;
-          this.enemyThrowSnowball(enemy);
-        }
-      } else if (enemy.state === 'hit') {
-        enemy.stateTimer -= delta;
-        // Spin around comically
-        enemy.group.rotation.y += delta * 15;
-        enemy.group.position.y = Math.sin(enemy.stateTimer * 8) * 0.4;
-
-        if (enemy.stateTimer <= 0) {
-          enemy.state = 'idle';
-          enemy.group.rotation.y = 0;
-          enemy.group.position.y = 0;
-        }
-      } else if (enemy.state === 'burst') {
-        enemy.respawnTimer -= delta;
-        if (enemy.respawnTimer <= 0) {
-          const angle = Math.random() * Math.PI * 2;
-          const dist = 10 + Math.random() * 8;
-          enemy.x = Math.cos(angle) * dist;
-          enemy.z = Math.sin(angle) * dist;
-          enemy.group.position.set(enemy.x, 0, enemy.z);
-          enemy.group.rotation.set(0, 0, 0);
-          enemy.group.scale.set(1, 1, 1);
-          enemy.health = 3;
-          enemy.state = 'idle';
-          enemy.group.visible = true;
-          enemy.hpPips.forEach((pip) => (pip.visible = true));
-          this.spawnSnowSplats(enemy.x, 1.0, enemy.z, 12, 0xffffff);
-        }
-      }
-    }
-
-    // 4. Update Projectiles
-    for (let i = this.projectiles.length - 1; i >= 0; i--) {
-      const p = this.projectiles[i];
-      p.life -= delta;
-
-      p.mesh.position.x += p.vx * delta;
-      p.mesh.position.y += p.vy * delta;
-      p.mesh.position.z += p.vz * delta;
-      p.vy -= 9.8 * delta * 0.6; // gravity
-
-      let remove = p.life <= 0 || p.mesh.position.y <= 0.2;
-
-      if (!remove && p.isPlayer) {
-        // Check collision against snowmen
-        for (const enemy of this.enemies) {
-          const dx = enemy.x - p.mesh.position.x;
-          const dz = enemy.z - p.mesh.position.z;
-          const horizontalDist = Math.sqrt(dx * dx + dz * dz);
-          const pY = p.mesh.position.y;
-          const baseY = enemy.group.position.y;
-
-          // Détection cylindrique précise couvrant le socle, le ventre et la tête (jusqu'à 4.1m)
-          const isHit =
-            enemy.state !== 'burst' &&
-            horizontalDist <= 1.55 &&
-            pY >= baseY - 0.2 &&
-            pY <= baseY + 4.1;
-
-          if (isHit) {
-            remove = true;
-            enemy.health -= 1;
-
-            // Actualisation visuelle instantanée des pépites de vie
-            enemy.hpPips.forEach((pip, idx) => {
-              pip.visible = idx < enemy.health;
-            });
-
-            if (enemy.health <= 0) {
-              // 3ème impact garanti : éclatement complet et spectaculaire !
-              enemy.state = 'burst';
-              enemy.respawnTimer = 6.0;
-              enemy.group.visible = false;
-              playSplat();
-              // Explosion massive : neige blanche + éclats de carotte orange et chapeau violet
-              this.spawnSnowSplats(enemy.x, 1.6, enemy.z, 45, 0xffffff);
-              this.spawnSnowSplats(enemy.x, 2.6, enemy.z, 18, 0xf97316);
-              this.spawnSnowSplats(enemy.x, 3.2, enemy.z, 16, 0xd946ef);
-              this.callbacks.onHitEnemy(150, true);
-            } else {
-              // Impacts 1 et 2 : réaction de vacillement comique (hitbox 100% préservée)
-              enemy.state = 'hit';
-              enemy.stateTimer = 0.8;
-              playSplat();
-              this.spawnSnowSplats(p.mesh.position.x, pY, p.mesh.position.z, 18, 0x38bdf8);
-              this.callbacks.onHitEnemy(50, this.cannonTier >= 2);
-            }
-            break;
-          }
-        }
-      } else if (!remove && !p.isPlayer) {
-        // Enemy snowball check against player
-        const dx = this.robotX - p.mesh.position.x;
-        const dz = this.robotZ - p.mesh.position.z;
-        const dist = Math.sqrt(dx * dx + dz * dz);
-        if (dist < 1.3) {
-          remove = true;
-          playSplat();
-          this.spawnSnowSplats(this.robotX, 1.5, this.robotZ, 14, 0xffffff);
-          if (this.callbacks.onRobotDamaged) {
-            this.callbacks.onRobotDamaged(this.hasShield ? 5 : 15);
-          }
-        }
-      }
-
-      if (remove) {
-        if (p.mesh.position.y <= 0.3) {
-          this.spawnSnowSplats(p.mesh.position.x, 0.2, p.mesh.position.z, 8, 0xffffff);
-        }
-        this.scene.remove(p.mesh);
-        p.mesh.geometry.dispose();
-        (p.mesh.material as THREE.Material).dispose();
-        this.projectiles.splice(i, 1);
-      }
-    }
-
-    // 5. Update Splat Particles
-    for (let i = this.particles.length - 1; i >= 0; i--) {
-      const part = this.particles[i];
-      part.life -= delta;
-
-      part.mesh.position.x += part.vx * delta;
-      part.mesh.position.y += part.vy * delta;
-      part.mesh.position.z += part.vz * delta;
-      part.vy -= 9.8 * delta;
-
-      const progress = part.life / part.maxLife;
-      part.mesh.scale.set(progress, progress, progress);
-
-      if (part.life <= 0 || part.mesh.position.y <= 0.05) {
-        this.scene.remove(part.mesh);
-        part.mesh.geometry.dispose();
-        (part.mesh.material as THREE.Material).dispose();
-        this.particles.splice(i, 1);
       }
     }
 
@@ -1405,22 +1622,235 @@ export class RoboNeigeScene {
     }
   }
 
+  private updateLevel(delta: number) {
+    const cfg = this.level!;
+    const st = this.levelState;
+
+    if (st.finished) {
+      if (st.finishTimer > 0) {
+        st.finishTimer -= delta;
+        if (st.finishTimer <= 0) this.callbacks.onLevelComplete?.();
+      }
+      return;
+    }
+
+    if (cfg.mode === 'defend') {
+      st.timeLeft = Math.max(0, st.timeLeft - delta);
+
+      // Vagues : tous les bonshommes arrivent avant la fin du chrono
+      st.spawnTimer -= delta;
+      if (st.spawned < cfg.enemyCount && st.spawnTimer <= 0) {
+        const angle = Math.random() * Math.PI * 2;
+        this.enemies.push(this.createSnowman(cfg, Math.cos(angle) * 24, Math.sin(angle) * 24));
+        st.spawned++;
+        st.spawnTimer = (cfg.duration - 10) / cfg.enemyCount;
+      }
+
+      if (st.castleHp <= 0) {
+        st.finished = true;
+        this.emitProgress();
+        this.callbacks.onLevelFailed?.('castle');
+        return;
+      }
+    }
+
+    const timeOk = cfg.mode !== 'defend' || st.timeLeft <= 0;
+    if (timeOk && st.killed >= cfg.enemyCount) {
+      st.finished = true;
+      st.finishTimer = 1.2;
+    }
+    this.emitProgress();
+  }
+
+  private updateEnemies(delta: number) {
+    const cfg = this.level!;
+    for (const enemy of this.enemies) {
+      enemy.wobblePhase += delta * 3;
+
+      if (enemy.state === 'hit') {
+        enemy.stateTimer -= delta;
+        enemy.group.rotation.y += delta * 15;
+        enemy.group.position.y = Math.abs(Math.sin(enemy.stateTimer * 8)) * 0.4;
+        if (enemy.stateTimer <= 0) {
+          enemy.state = 'idle';
+          enemy.group.rotation.y = 0;
+          enemy.group.position.y = 0;
+        }
+        continue;
+      }
+
+      enemy.group.rotation.z = Math.sin(enemy.wobblePhase) * 0.12;
+      enemy.group.rotation.x = Math.cos(enemy.wobblePhase * 0.8) * 0.08;
+      enemy.head.rotation.y = Math.sin(enemy.wobblePhase * 1.5) * 0.25;
+
+      const dxP = this.robotX - enemy.x;
+      const dzP = this.robotZ - enemy.z;
+      const distP = Math.sqrt(dxP * dxP + dzP * dzP) || 0.001;
+
+      if (cfg.mode === 'defend') {
+        // Marche vers le château puis l'attaque
+        const distC = Math.sqrt(enemy.x * enemy.x + enemy.z * enemy.z) || 0.001;
+        const reach = CASTLE_RADIUS + 0.9 * enemy.scale;
+        if (distC > reach) {
+          enemy.x -= (enemy.x / distC) * enemy.speed * delta;
+          enemy.z -= (enemy.z / distC) * enemy.speed * delta;
+        } else {
+          enemy.attackCooldown -= delta;
+          enemy.group.rotation.x = -0.25;
+          if (enemy.attackCooldown <= 0) {
+            enemy.attackCooldown = 1.5;
+            this.levelState.castleHp -= 8;
+            playSplat();
+            this.spawnSnowSplats(enemy.x * 0.85, 2.0, enemy.z * 0.85, 12, 0xbae6fd);
+          }
+        }
+      } else if (distP < 9) {
+        // Poursuit le robot quand il est proche
+        enemy.x += (dxP / distP) * enemy.speed * delta;
+        enemy.z += (dzP / distP) * enemy.speed * delta;
+      } else {
+        enemy.x += enemy.vx * delta;
+        enemy.z += enemy.vz * delta;
+        const dist = Math.sqrt(enemy.x * enemy.x + enemy.z * enemy.z);
+        if (dist > 21) {
+          enemy.vx = -enemy.vx;
+          enemy.vz = -enemy.vz;
+          enemy.x *= 21 / dist;
+          enemy.z *= 21 / dist;
+        }
+      }
+
+      // Contact avec le robot : dégâts + recul
+      const contact = 1.1 + 0.9 * enemy.scale;
+      if (distP < contact) {
+        this.damageRobot(10);
+        const push = contact - distP + 0.8;
+        this.robotX += (dxP / distP) * push;
+        this.robotZ += (dzP / distP) * push;
+        this.clampRobot();
+      }
+
+      enemy.group.position.x = enemy.x;
+      enemy.group.position.z = enemy.z;
+      enemy.group.rotation.y = Math.atan2(dxP, dzP);
+
+      enemy.throwCooldown -= delta;
+      if (distP < 14 && enemy.throwCooldown <= 0) {
+        enemy.throwCooldown = cfg.throwInterval + Math.random() * 2;
+        this.enemyThrowSnowball(enemy);
+      }
+    }
+  }
+
+  private updateHearts(delta: number, time: number) {
+    this.heartTimer -= delta;
+    if (this.heartTimer <= 0) {
+      this.heartTimer = 14 + Math.random() * 8;
+      if (this.hearts.length < 2) this.spawnHeart();
+    }
+
+    for (let i = this.hearts.length - 1; i >= 0; i--) {
+      const h = this.hearts[i];
+      h.life -= delta;
+      if (h.scale < 1) {
+        h.scale = Math.min(1, h.scale + delta * 2.5);
+        h.group.scale.setScalar(h.scale);
+      }
+      h.heart.rotation.y = time * 2.5;
+      h.heart.position.y = 1.3 + Math.sin(time * 3 + h.x) * 0.2;
+      // Clignote pendant les 3 dernières secondes
+      h.group.visible = h.life > 3 || Math.floor(time * 8) % 2 === 0;
+
+      const dx = h.x - this.robotX;
+      const dz = h.z - this.robotZ;
+      if (dx * dx + dz * dz < 1.8 * 1.8) {
+        this.spawnSnowSplats(h.x, 1.3, h.z, 20, 0xf43f5e);
+        playSuccessChime();
+        this.callbacks.onCollectHeart?.();
+        this.removeHeart(i);
+      } else if (h.life <= 0) {
+        this.removeHeart(i);
+      }
+    }
+  }
+
+  private updateDebris(delta: number) {
+    for (let i = this.debris.length - 1; i >= 0; i--) {
+      const d = this.debris[i];
+      d.life -= delta;
+      d.vy -= 14 * delta;
+      d.obj.position.x += d.vx * delta;
+      d.obj.position.y = Math.max(0, d.obj.position.y + d.vy * delta);
+      d.obj.position.z += d.vz * delta;
+      d.obj.rotation.x += d.spin * delta;
+      d.obj.rotation.z += d.spin * 0.7 * delta;
+      d.obj.scale.setScalar(d.baseScale * Math.max(0, Math.min(1, d.life / 0.6)));
+      if (d.life <= 0) {
+        this.scene.remove(d.obj);
+        this.debris.splice(i, 1);
+      }
+    }
+  }
+
+  private updateParticles(delta: number) {
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const part = this.particles[i];
+      part.life -= delta;
+
+      part.mesh.position.x += part.vx * delta;
+      part.mesh.position.y += part.vy * delta;
+      part.mesh.position.z += part.vz * delta;
+      part.vy -= 9.8 * delta;
+
+      const progress = part.life / part.maxLife;
+      part.mesh.scale.set(progress, progress, progress);
+
+      if (part.life <= 0 || part.mesh.position.y <= 0.05) {
+        this.scene.remove(part.mesh);
+        part.mesh.geometry.dispose();
+        (part.mesh.material as THREE.Material).dispose();
+        this.particles.splice(i, 1);
+      }
+    }
+  }
+
+  private clampRobot() {
+    const maxRadius = 22;
+    const curDist = Math.sqrt(this.robotX * this.robotX + this.robotZ * this.robotZ);
+    if (curDist > maxRadius) {
+      this.robotX = (this.robotX / curDist) * maxRadius;
+      this.robotZ = (this.robotZ / curDist) * maxRadius;
+    }
+    // Le robot ne traverse pas le château
+    if (this.castle && curDist < CASTLE_RADIUS + 0.6) {
+      const d = curDist || 0.001;
+      this.robotX = (this.robotX / d) * (CASTLE_RADIUS + 0.6);
+      this.robotZ = (this.robotZ / d) * (CASTLE_RADIUS + 0.6);
+    }
+  }
+
   private enemyThrowSnowball(enemy: SnowmanEnemy) {
     const ballGeo = new THREE.SphereGeometry(0.24, 8, 8);
     const ballMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7 });
     const mesh = new THREE.Mesh(ballGeo, ballMat);
-    mesh.position.set(enemy.x, 2.4, enemy.z);
+    const startY = 2.4 * enemy.scale;
+    mesh.position.set(enemy.x, startY, enemy.z);
     this.scene.add(mesh);
 
     const dx = this.robotX - enemy.x;
     const dz = this.robotZ - enemy.z;
-    const dist = Math.sqrt(dx * dx + dz * dz);
+    const dist = Math.sqrt(dx * dx + dz * dz) || 0.001;
     const speed = 12;
+
+    // Arc calculé pour retomber à hauteur du robot (~1.3 m) à sa position
+    const flightTime = dist / speed;
+    const gravity = 9.8 * 0.6;
+    const vy = (1.3 - startY + 0.5 * gravity * flightTime * flightTime) / flightTime;
 
     this.projectiles.push({
       mesh,
       vx: (dx / dist) * speed,
-      vy: 4.2,
+      vy,
       vz: (dz / dist) * speed,
       life: 2.5,
       isPlayer: false,

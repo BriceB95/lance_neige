@@ -5,6 +5,8 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    // Chemins relatifs : fonctionne sur GitHub Pages (/lance_neige/)
+    base: './',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

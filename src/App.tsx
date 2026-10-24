@@ -6,6 +6,8 @@ import { WorkshopModal } from './components/WorkshopModal';
 import { ParentPortal } from './components/ParentPortal';
 import { RewardsModal } from './components/RewardsModal';
 import { CelebrationOverlay } from './components/CelebrationOverlay';
+import { LevelOverlay } from './components/LevelOverlay';
+import { getLevelConfig } from './data/levels';
 import { RoboNeigeScene } from './game/threeScene';
 import {
   loadPlayerState,
@@ -20,7 +22,7 @@ import {
   saveStickers,
   resetAllData,
 } from './storage/gameStorage';
-import { PlayerState, UpgradeItem, ParentStats, Trophy, StickerReward, DifficultyLevel, TerrainTheme } from './types';
+import { PlayerState, UpgradeItem, ParentStats, Trophy, StickerReward, DifficultyLevel, TerrainTheme, LevelProgress } from './types';
 import { speakFrench } from './audio/soundEffects';
 
 export default function App() {
@@ -37,12 +39,40 @@ export default function App() {
   const [isRewardsOpen, setIsRewardsOpen] = useState(false);
   const [isParentPortalOpen, setIsParentPortalOpen] = useState(false);
 
+  // Level state
+  const [gameStatus, setGameStatus] = useState<'playing' | 'won' | 'lost'>('playing');
+  const [failReason, setFailReason] = useState<'robot' | 'castle'>('robot');
+  const [levelProgress, setLevelProgress] = useState<LevelProgress | null>(null);
+  const [initialLevel] = useState(() => getLevelConfig(playerState.gameLevel));
+
   // Mission prompt for child
-  const [missionHint, setMissionHint] = useState<string>(
-    'Guide ton robot pour ramasser la neige au sol ! ❄️'
-  );
+  const [missionHint, setMissionHint] = useState<string>(initialLevel.hint);
 
   const sceneRef = useRef<RoboNeigeScene | null>(null);
+
+  // Stock réel de boules, mis à jour immédiatement à chaque tir (anti tir illimité)
+  const ammoRef = useRef(playerState.snowAmmo);
+  ammoRef.current = playerState.snowAmmo;
+
+  // Pause du jeu quand une fenêtre est ouverte ou le niveau terminé
+  const isPaused =
+    gameStatus !== 'playing' ||
+    isWorkshopOpen ||
+    isRewardsOpen ||
+    isParentPortalOpen ||
+    celebrationReward !== null;
+
+  useEffect(() => {
+    sceneRef.current?.setPaused(isPaused);
+  }, [isPaused]);
+
+  // Énergie à zéro : niveau perdu
+  useEffect(() => {
+    if (playerState.health <= 0 && gameStatus === 'playing') {
+      setFailReason('robot');
+      setGameStatus('lost');
+    }
+  }, [playerState.health, gameStatus]);
 
   // Auto-save on state updates
   useEffect(() => {
@@ -165,22 +195,50 @@ export default function App() {
 
   // Handler: robot takes damage from enemy snowball
   const handleRobotDamaged = (amount: number) => {
-    setPlayerState((prev) => {
-      const nextHealth = Math.max(0, prev.health - amount);
-      if (nextHealth === 0) {
-        speakFrench("Oups ! Robot tout gelé ! Réchauffement magique en cours...");
-        setTimeout(() => {
-          setPlayerState((p) => ({ ...p, health: 100 }));
-          setMissionHint('Robot réparé et réchauffé ! Reprends l\'aventure ! ☀️');
-        }, 2000);
-      }
-      return { ...prev, health: nextHealth };
-    });
+    setPlayerState((prev) => ({ ...prev, health: Math.max(0, prev.health - amount) }));
   };
+
+  // Handler: heart pickup (+10% d'énergie)
+  const handleCollectHeart = () => {
+    setPlayerState((prev) => ({
+      ...prev,
+      health: Math.min(prev.maxHealth, prev.health + Math.round(prev.maxHealth * 0.1)),
+    }));
+    setMissionHint('Miam, un cœur ! +10% d\'énergie ❤️');
+  };
+
+  // Handler: level complete
+  const handleLevelComplete = () => {
+    setPlayerState((prev) => ({ ...prev, score: prev.score + 200, stars: prev.stars + 3 }));
+    setGameStatus('won');
+  };
+
+  // Handler: level failed (château détruit)
+  const handleLevelFailed = (reason: 'castle') => {
+    setFailReason(reason);
+    setGameStatus('lost');
+  };
+
+  const startLevel = (levelNumber: number) => {
+    const cfg = getLevelConfig(levelNumber);
+    sceneRef.current?.startLevel(cfg);
+    setPlayerState((prev) => ({
+      ...prev,
+      gameLevel: levelNumber,
+      health: prev.maxHealth,
+      snowAmmo: Math.max(prev.snowAmmo, 5),
+    }));
+    setMissionHint(cfg.hint);
+    speakFrench(cfg.hint.replace(/[^\p{L}\p{N}\s',!.:]/gu, ''));
+    setGameStatus('playing');
+  };
+
+  const handleNextLevel = () => startLevel(playerState.gameLevel + 1);
+  const handleRetryLevel = () => startLevel(playerState.gameLevel);
 
   // Handler: fire snowball
   const handleFireSnowball = () => {
-    if (playerState.snowAmmo <= 0) {
+    if (ammoRef.current <= 0) {
       setMissionHint('Réservoir vide ! Roule sur les tas de neige pour recharger ! ❄️');
       speakFrench('Ton réservoir est vide ! Va vite ramasser de la neige !');
       return;
@@ -189,6 +247,7 @@ export default function App() {
     if (sceneRef.current) {
       const fired = sceneRef.current.fireSnowball();
       if (fired) {
+        ammoRef.current -= 1;
         setPlayerState((prev) => ({
           ...prev,
           snowAmmo: Math.max(0, prev.snowAmmo - 1),
@@ -359,6 +418,7 @@ export default function App() {
     setTrophies(loadTrophies());
     setStickers(loadStickers());
     setTerrainTheme('snow-forest');
+    startLevel(1);
   };
 
   const isGolden = playerState.colorTheme === 'gold';
@@ -367,13 +427,18 @@ export default function App() {
     <div className="relative w-screen h-screen overflow-hidden bg-sky-950 font-sans select-none">
       {/* 3D WebGL Canvas */}
       <GameCanvas
-        onCollectSnow={handleCollectSnow}
-        onHitEnemy={handleHitEnemy}
-        onRobotDamaged={handleRobotDamaged}
-        onFire={handleFireSnowball}
-        onScoop={() => {
-          if (sceneRef.current) sceneRef.current.scoopSnowManually();
+        callbacks={{
+          onCollectSnow: handleCollectSnow,
+          onHitEnemy: handleHitEnemy,
+          onRobotDamaged: handleRobotDamaged,
+          onCollectHeart: handleCollectHeart,
+          onLevelProgress: setLevelProgress,
+          onLevelComplete: handleLevelComplete,
+          onLevelFailed: handleLevelFailed,
         }}
+        onFire={handleFireSnowball}
+        onScoop={handleManualScoop}
+        initialLevel={initialLevel}
         ammo={playerState.snowAmmo}
         maxAmmo={playerState.maxSnow}
         speedMultiplier={playerState.speedMultiplier}
@@ -398,6 +463,7 @@ export default function App() {
         onOpenRewards={() => setIsRewardsOpen(true)}
         onOpenParentPortal={() => setIsParentPortalOpen(true)}
         activeMissionHint={missionHint}
+        levelProgress={levelProgress}
       />
 
       {/* Virtual Joystick & Action Buttons */}
@@ -435,6 +501,16 @@ export default function App() {
         stats={parentStats}
         onUpdateLevel={handleUpdateLevel}
         onResetData={handleResetData}
+      />
+
+      {/* Level Won / Lost Overlay */}
+      <LevelOverlay
+        status={gameStatus}
+        level={playerState.gameLevel}
+        failReason={failReason}
+        nextTitle={getLevelConfig(playerState.gameLevel + 1).title}
+        onNext={handleNextLevel}
+        onRetry={handleRetryLevel}
       />
 
       {/* Celebratory Reward Ceremony Overlay */}

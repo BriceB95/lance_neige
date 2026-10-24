@@ -1,13 +1,12 @@
 import React, { useEffect, useRef } from 'react';
-import { RoboNeigeScene } from '../game/threeScene';
-import { TerrainTheme } from '../types';
+import { RoboNeigeScene, SceneCallbacks } from '../game/threeScene';
+import { LevelConfig, TerrainTheme } from '../types';
 
 interface GameCanvasProps {
-  onCollectSnow: (amount: number) => void;
-  onHitEnemy: (scoreGain: number, isDouble?: boolean) => void;
-  onRobotDamaged?: (amount: number) => void;
+  callbacks: SceneCallbacks;
   onFire: () => void;
   onScoop: () => void;
+  initialLevel: LevelConfig;
   ammo: number;
   maxAmmo: number;
   speedMultiplier: number;
@@ -19,11 +18,10 @@ interface GameCanvasProps {
 }
 
 export const GameCanvas: React.FC<GameCanvasProps> = ({
-  onCollectSnow,
-  onHitEnemy,
-  onRobotDamaged,
+  callbacks,
   onFire,
   onScoop,
+  initialLevel,
   ammo,
   maxAmmo,
   speedMultiplier,
@@ -35,15 +33,28 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Toujours appeler la dernière version des handlers React (évite les closures figées)
+  const callbacksRef = useRef(callbacks);
+  callbacksRef.current = callbacks;
+  const onFireRef = useRef(onFire);
+  onFireRef.current = onFire;
+  const onScoopRef = useRef(onScoop);
+  onScoopRef.current = onScoop;
+
   useEffect(() => {
     if (!containerRef.current) return;
 
     const scene = new RoboNeigeScene(containerRef.current, {
-      onCollectSnow,
-      onHitEnemy,
-      onRobotDamaged,
+      onCollectSnow: (amount) => callbacksRef.current.onCollectSnow(amount),
+      onHitEnemy: (score, isDouble) => callbacksRef.current.onHitEnemy(score, isDouble),
+      onRobotDamaged: (amount) => callbacksRef.current.onRobotDamaged?.(amount),
+      onCollectHeart: () => callbacksRef.current.onCollectHeart?.(),
+      onLevelProgress: (p) => callbacksRef.current.onLevelProgress?.(p),
+      onLevelComplete: () => callbacksRef.current.onLevelComplete?.(),
+      onLevelFailed: (r) => callbacksRef.current.onLevelFailed?.(r),
     });
     sceneRef.current = scene;
+    scene.startLevel(initialLevel);
 
     // Window resize handler
     const handleResize = () => {
@@ -56,14 +67,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       keysDown[e.key.toLowerCase()] = true;
 
-      // Spacebar to shoot (calls parent onFire which correctly checks and decrements ammo)
+      // Espace = tirer (même règle de stock que le bouton Tirer)
       if (e.code === 'Space') {
         e.preventDefault();
-        onFire();
+        if (!e.repeat) onFireRef.current();
       }
       // R to scoop snow
       if (e.key.toLowerCase() === 'r') {
-        onScoop();
+        onScoopRef.current();
       }
     };
 
