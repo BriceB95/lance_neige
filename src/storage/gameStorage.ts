@@ -21,7 +21,8 @@ const DEFAULT_PLAYER_STATE: PlayerState = {
   hasShield: false,
   colorTheme: 'cyan',
   unlockedUpgrades: [],
-  equippedUpgrades: {}
+  equippedUpgrades: {},
+  gameLevel: 1
 };
 
 const DEFAULT_PARENT_STATS: ParentStats = {
@@ -40,7 +41,12 @@ const DEFAULT_PARENT_STATS: ParentStats = {
 export function loadPlayerState(): PlayerState {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.PLAYER);
-    if (raw) return { ...DEFAULT_PLAYER_STATE, ...JSON.parse(raw) };
+    if (raw) {
+      const state: PlayerState = { ...DEFAULT_PLAYER_STATE, ...JSON.parse(raw) };
+      // Un robot sans énergie repart toujours avec la vie pleine
+      if (state.health <= 0) state.health = state.maxHealth;
+      return state;
+    }
   } catch (e) {
     console.warn('Storage read error:', e);
   }

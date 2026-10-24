@@ -1,7 +1,7 @@
 import React from 'react';
 import { Snowflake, Heart, Award, Wrench, Shield, Volume2, Sparkles, Mountain } from 'lucide-react';
 import { speakFrench } from '../audio/soundEffects';
-import { TerrainTheme } from '../types';
+import { LevelProgress, TerrainTheme } from '../types';
 
 interface HUDProps {
   snowAmmo: number;
@@ -16,6 +16,7 @@ interface HUDProps {
   onOpenRewards: () => void;
   onOpenParentPortal: () => void;
   activeMissionHint: string;
+  levelProgress: LevelProgress | null;
 }
 
 export const HUD: React.FC<HUDProps> = ({
@@ -30,6 +31,7 @@ export const HUD: React.FC<HUDProps> = ({
   onOpenRewards,
   onOpenParentPortal,
   activeMissionHint,
+  levelProgress,
 }) => {
   const snowPercent = Math.min(100, Math.round((snowAmmo / maxSnow) * 100));
   const healthPercent = Math.min(100, Math.round((health / maxHealth) * 100));
@@ -153,6 +155,30 @@ export const HUD: React.FC<HUDProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Level Progress */}
+      {levelProgress && (
+        <div className="pointer-events-none self-center flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-indigo-950/85 backdrop-blur-md px-4 py-1.5 rounded-2xl border-2 border-amber-300/70 shadow-md text-xs font-black text-white">
+          <span className="text-amber-300">Niveau {levelProgress.level}</span>
+          <span>⛄ {levelProgress.killed}/{levelProgress.total}</span>
+          {levelProgress.mode === 'defend' && (
+            <>
+              <span>⏱️ {levelProgress.timeLeft}s</span>
+              <span className="flex items-center gap-1">
+                🏰
+                <span className="w-16 h-2 bg-slate-900 rounded-full overflow-hidden border border-slate-600 inline-block">
+                  <span
+                    className="block h-full bg-gradient-to-r from-emerald-400 to-lime-300 transition-all duration-300"
+                    style={{
+                      width: `${Math.round((levelProgress.castleHp / Math.max(1, levelProgress.castleMaxHp)) * 100)}%`,
+                    }}
+                  />
+                </span>
+              </span>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Helpful Audio-Assisted Mission Prompt */}
       <div className="pointer-events-auto self-center flex items-center gap-2 bg-sky-950/85 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-cyan-400/50 shadow-md max-w-md">
