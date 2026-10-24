@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { playSnowScoop, playSnowballShoot, playSplat, playRobotBoop, playSuccessChime } from '../audio/soundEffects';
-import { LevelConfig, LevelProgress, TerrainTheme } from '../types';
+import { LevelConfig, LevelProgress, RobotStats, TerrainTheme } from '../types';
+import { BASE_STATS } from '../data/upgrades';
 
 export interface SceneCallbacks {
   onCollectSnow: (amount: number) => void;
@@ -41,6 +42,7 @@ function sweepCylinder(
 const _vec3A = new THREE.Vector3();
 const _vec3B = new THREE.Vector3();
 const _vec3C = new THREE.Vector3();
+const _quat = new THREE.Quaternion();
 
 export interface SnowPile {
   group: THREE.Group;
@@ -54,7 +56,8 @@ export interface SnowPile {
 export interface SnowmanEnemy {
   group: THREE.Group;
   head: THREE.Mesh;
-  hpPips: THREE.Mesh[];
+  hpBar: THREE.Group;
+  hpFill: THREE.Mesh;
   x: number;
   z: number;
   vx: number;
@@ -97,6 +100,7 @@ export interface Projectile {
   life: number;
   isPlayer: boolean;
   radius: number;
+  damage: number;
 }
 
 export interface SplatParticle {
@@ -169,9 +173,7 @@ export class RoboNeigeScene {
   public robotRotation = 0;
   public targetRotation = 0;
   public moveSpeed = 9.0;
-  public cannonTier = 1;
-  public hasShield = false;
-  public isGolden = false;
+  public stats: RobotStats = { ...BASE_STATS };
 
   private callbacks: SceneCallbacks;
   private isDisposed = false;
@@ -848,7 +850,8 @@ export class RoboNeigeScene {
       pompomGeo: new THREE.SphereGeometry(0.2, 8, 8),
       armGeo: new THREE.CylinderGeometry(0.06, 0.06, 1.1, 6),
       shadowGeo: new THREE.CircleGeometry(1.1, 12),
-      pipGeo: new THREE.SphereGeometry(0.16, 8, 8),
+      barGeo: new THREE.PlaneGeometry(1.7, 0.3),
+      fillGeo: new THREE.PlaneGeometry(1.6, 0.2).translate(0.8, 0, 0),
       snowMat: new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.6 }),
       coalMat: new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 }),
       carrotMat: new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.5 }),
@@ -860,12 +863,7 @@ export class RoboNeigeScene {
         opacity: 0.35,
         depthWrite: false,
       }),
-      pipMat: new THREE.MeshStandardMaterial({
-        color: 0x38bdf8,
-        emissive: 0x0284c7,
-        emissiveIntensity: 0.9,
-        roughness: 0.2,
-      }),
+      barBgMat: new THREE.MeshBasicMaterial({ color: 0x0f172a }),
     };
     return this.snowmanAssets;
   }
@@ -928,19 +926,16 @@ export class RoboNeigeScene {
     contactShadow.userData.noDebris = true;
     group.add(contactShadow);
 
-    // Pastilles de vie au-dessus du chapeau (une par point de vie)
-    const hpGroup = new THREE.Group();
-    hpGroup.position.set(0, 4.25, 0);
-    hpGroup.userData.noDebris = true;
-    const hpPips: THREE.Mesh[] = [];
-    const spacing = 0.38;
-    for (let pIdx = 0; pIdx < cfg.enemyHp; pIdx++) {
-      const pip = new THREE.Mesh(a.pipGeo, a.pipMat);
-      pip.position.set((pIdx - (cfg.enemyHp - 1) / 2) * spacing, 0, 0);
-      hpGroup.add(pip);
-      hpPips.push(pip);
-    }
-    group.add(hpGroup);
+    // Barre de vie au-dessus du chapeau (toujours tournée vers la caméra)
+    const hpBar = new THREE.Group();
+    hpBar.position.set(0, 4.35, 0);
+    hpBar.userData.noDebris = true;
+    const hpBg = new THREE.Mesh(a.barGeo, a.barBgMat);
+    hpBar.add(hpBg);
+    const hpFill = new THREE.Mesh(a.fillGeo, new THREE.MeshBasicMaterial({ color: 0x4ade80 }));
+    hpFill.position.set(-0.8, 0, 0.01);
+    hpBar.add(hpFill);
+    group.add(hpBar);
 
     group.scale.setScalar(cfg.enemyScale);
     group.position.set(x, 0, z);
@@ -950,7 +945,8 @@ export class RoboNeigeScene {
     return {
       group,
       head,
-      hpPips,
+      hpBar,
+      hpFill,
       x,
       z,
       vx: Math.cos(angle) * cfg.enemySpeed * 0.6,
@@ -1085,7 +1081,10 @@ export class RoboNeigeScene {
   }
 
   private clearLevelObjects() {
-    for (const enemy of this.enemies) this.scene.remove(enemy.group);
+    for (const enemy of this.enemies) {
+      this.scene.remove(enemy.group);
+      (enemy.hpFill.material as THREE.Material).dispose();
+    }
     this.enemies = [];
     for (const d of this.debris) this.scene.remove(d.obj);
     this.debris = [];
@@ -1173,7 +1172,14 @@ export class RoboNeigeScene {
   private damageRobot(amount: number) {
     if (this.hurtCooldown > 0) return;
     this.hurtCooldown = 0.8;
-    this.callbacks.onRobotDamaged?.(this.hasShield ? Math.ceil(amount / 2) : amount);
+    this.callbacks.onRobotDamaged?.(Math.max(1, Math.round(amount * (1 - this.stats.armor / 100))));
+  }
+
+  private updateHpBar(enemy: SnowmanEnemy) {
+    const ratio = Math.max(0, enemy.health / enemy.maxHealth);
+    enemy.hpFill.scale.x = Math.max(0.001, ratio);
+    const mat = enemy.hpFill.material as THREE.MeshBasicMaterial;
+    mat.color.setHex(ratio > 0.6 ? 0x4ade80 : ratio > 0.3 ? 0xfacc15 : 0xf87171);
   }
 
   /**
@@ -1182,6 +1188,7 @@ export class RoboNeigeScene {
   private burstSnowman(index: number) {
     const enemy = this.enemies[index];
     this.enemies.splice(index, 1);
+    (enemy.hpFill.material as THREE.Material).dispose();
 
     const parts = [...enemy.group.children];
     for (const part of parts) {
@@ -1273,13 +1280,13 @@ export class RoboNeigeScene {
       const dz = pile.z - this.robotZ;
       const dist = Math.sqrt(dx * dx + dz * dz);
 
-      if (dist < 2.0) {
+      if (dist < this.stats.pickupRadius) {
         pile.active = false;
         pile.respawnTimer = 8; // respawn after 8 seconds
         pile.group.visible = false;
         this.spawnSnowSplats(pile.x, 0.4, pile.z, 14, 0xffffff);
         playSnowScoop();
-        this.callbacks.onCollectSnow(3);
+        this.callbacks.onCollectSnow(this.stats.snowPerPile);
         collectedAny = true;
       }
     }
@@ -1315,8 +1322,9 @@ export class RoboNeigeScene {
 
     const shootSpeed = 24;
 
-    const createSingleBall = (offX: number, offY: number, offZ: number, spreadAngle: number) => {
-      const ballGeo = new THREE.SphereGeometry(0.3, 10, 10);
+    const radius = 0.3 * this.stats.ballSize;
+    const createSingleBall = (offY: number, spreadAngle: number) => {
+      const ballGeo = new THREE.SphereGeometry(radius, 10, 10);
       const ballMat = new THREE.MeshStandardMaterial({
         color: 0xffffff,
         roughness: 0.2,
@@ -1324,7 +1332,7 @@ export class RoboNeigeScene {
         emissiveIntensity: 0.5,
       });
       const mesh = new THREE.Mesh(ballGeo, ballMat);
-      mesh.position.set(startX + offX, startY + offY, startZ + offZ);
+      mesh.position.set(startX, startY + offY, startZ);
       this.scene.add(mesh);
 
       const rot = this.robotRotation + spreadAngle;
@@ -1335,15 +1343,16 @@ export class RoboNeigeScene {
         vz: Math.cos(rot) * shootSpeed,
         life: 2.2,
         isPlayer: true,
-        radius: 0.3,
+        radius,
+        damage: this.stats.damage,
       });
     };
 
-    // Single or Double shot depending on upgrade tier
-    createSingleBall(0, 0, 0, 0);
-    if (this.cannonTier >= 2) {
-      createSingleBall(0, 0.3, 0, 0.12);
-      createSingleBall(0, 0.3, 0, -0.12);
+    // Plusieurs boules en éventail selon les améliorations du canon
+    const count = Math.max(1, Math.round(this.stats.multishot));
+    for (let i = 0; i < count; i++) {
+      const spread = (i - (count - 1) / 2) * 0.12;
+      createSingleBall(i === 0 ? 0 : 0.3, spread);
     }
 
     return true;
@@ -1375,41 +1384,27 @@ export class RoboNeigeScene {
   }
 
   /**
-   * Update visual upgrades on robot
+   * Applique les statistiques et l'apparence du robot
    */
-  public updateUpgrades(upgrades: {
-    maxSnow: number;
-    currentSnow: number;
-    speedMultiplier: number;
-    cannonTier: number;
-    hasShield: boolean;
-    isGolden: boolean;
-  }) {
-    this.moveSpeed = 9.0 * upgrades.speedMultiplier;
-    this.cannonTier = upgrades.cannonTier;
-    this.hasShield = upgrades.hasShield;
-    this.isGolden = upgrades.isGolden;
+  public updateRobot(robot: { stats: RobotStats; currentSnow: number; paint: number; crown: boolean }) {
+    this.stats = robot.stats;
+    this.moveSpeed = 9.0 * robot.stats.speed;
 
     // Tank snow fullness
-    const fillRatio = Math.min(1.0, Math.max(0.2, upgrades.currentSnow / upgrades.maxSnow));
+    const fillRatio = Math.min(1.0, Math.max(0.2, robot.currentSnow / robot.stats.maxSnow));
     this.robotTankSnow.scale.set(fillRatio, fillRatio, fillRatio);
 
     // Visible upgrades
-    this.robotScarf.visible = upgrades.hasShield;
-    this.robotCrown.visible = upgrades.isGolden;
-    this.robotSecondBarrel.visible = upgrades.cannonTier >= 2;
+    this.robotScarf.visible = robot.stats.armor > 0;
+    this.robotCrown.visible = robot.crown;
+    this.robotSecondBarrel.visible = robot.stats.multishot >= 2;
 
-    // Change armor color if golden
+    // Couleur de carrosserie
     const torsoMat = this.robotTorso.material as THREE.MeshStandardMaterial;
-    if (upgrades.isGolden) {
-      torsoMat.color.setHex(0xf59e0b);
-      torsoMat.metalness = 0.9;
-      torsoMat.roughness = 0.2;
-    } else {
-      torsoMat.color.setHex(0x0284c7);
-      torsoMat.metalness = 0.7;
-      torsoMat.roughness = 0.25;
-    }
+    torsoMat.color.setHex(robot.paint);
+    const shiny = robot.paint === 0xf59e0b || robot.paint === 0xcbd5e1;
+    torsoMat.metalness = shiny ? 0.9 : 0.7;
+    torsoMat.roughness = shiny ? 0.2 : 0.25;
   }
 
   /**
@@ -1534,10 +1529,8 @@ export class RoboNeigeScene {
           if (hit.dist > radius || hit.y < -0.2 || hit.y > 4.1 * enemy.scale) continue;
 
           remove = true;
-          enemy.health -= 1;
-          enemy.hpPips.forEach((pip, idx) => {
-            pip.visible = idx < enemy.health;
-          });
+          enemy.health -= p.damage;
+          this.updateHpBar(enemy);
 
           if (enemy.health <= 0) {
             this.burstSnowman(e);
@@ -1546,7 +1539,7 @@ export class RoboNeigeScene {
             enemy.stateTimer = 0.5;
             playSplat();
             this.spawnSnowSplats(hit.x, hit.y, hit.z, 18, 0x38bdf8);
-            this.callbacks.onHitEnemy(50, this.cannonTier >= 2);
+            this.callbacks.onHitEnemy(50, this.stats.multishot >= 2);
           }
           break;
         }
@@ -1556,7 +1549,7 @@ export class RoboNeigeScene {
           remove = true;
           playSplat();
           this.spawnSnowSplats(this.robotX, 1.5, this.robotZ, 14, 0xffffff);
-          this.damageRobot(15);
+          this.damageRobot(this.level?.enemyDamage ?? 15);
         }
       }
 
@@ -1723,7 +1716,7 @@ export class RoboNeigeScene {
       // Contact avec le robot : dégâts + recul
       const contact = 1.1 + 0.9 * enemy.scale;
       if (distP < contact) {
-        this.damageRobot(10);
+        this.damageRobot(Math.round((cfg.enemyDamage ?? 10) * 0.7));
         const push = contact - distP + 0.8;
         this.robotX += (dxP / distP) * push;
         this.robotZ += (dzP / distP) * push;
@@ -1733,6 +1726,11 @@ export class RoboNeigeScene {
       enemy.group.position.x = enemy.x;
       enemy.group.position.z = enemy.z;
       enemy.group.rotation.y = Math.atan2(dxP, dzP);
+
+      // La barre de vie fait toujours face à la caméra
+      enemy.group.updateMatrixWorld();
+      enemy.group.getWorldQuaternion(_quat).invert();
+      enemy.hpBar.quaternion.copy(_quat).multiply(this.camera.quaternion);
 
       enemy.throwCooldown -= delta;
       if (distP < 14 && enemy.throwCooldown <= 0) {
@@ -1855,6 +1853,7 @@ export class RoboNeigeScene {
       life: 2.5,
       isPlayer: false,
       radius: 0.24,
+      damage: 0,
     });
   }
 

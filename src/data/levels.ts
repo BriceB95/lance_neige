@@ -1,24 +1,40 @@
 import { LevelConfig } from '../types';
 
+// Puissance exigée aux niveaux 4, 7, 10, 13... (tous les 3 niveaux)
+const POWER_GATES = [20, 45, 80, 130, 190, 260, 300];
+
+export function requiredPowerFor(level: number): number {
+  if (level < 4 || (level - 1) % 3 !== 0) return 0;
+  const gate = (level - 1) / 3 - 1;
+  return POWER_GATES[Math.min(gate, POWER_GATES.length - 1)];
+}
+
 /**
  * Niveaux impairs : éclater tous les bonshommes.
  * Niveaux pairs : défendre le château pendant 1 minute.
- * La difficulté augmente tous les 2 niveaux.
+ * Les bonshommes deviennent plus résistants et frappent plus fort à chaque niveau :
+ * sans amélioration du robot, la victoire devient impossible.
  */
 export function getLevelConfig(level: number): LevelConfig {
   const n = Math.max(1, Math.floor(level));
-  const stage = Math.floor((n - 1) / 2);
+  const d = n - 1;
+  const growth = Math.pow(1.18, d);
+  const common = {
+    number: n,
+    enemyScale: Math.min(1 + d * 0.06, 1.8),
+    enemySpeed: Math.min(1.3 + d * 0.06, 2.6),
+    throwInterval: Math.max(5 - d * 0.15, 2.2),
+    enemyDamage: Math.round(10 + d * 1.5),
+    requiredPower: requiredPowerFor(n),
+  };
 
   if (n % 2 === 1) {
-    const enemyCount = Math.min(5 + stage * 2, 13);
+    const enemyCount = Math.min(5 + Math.floor(d / 2) * 2, 14);
     return {
-      number: n,
+      ...common,
       mode: 'clear',
       enemyCount,
-      enemyHp: Math.min(3 + stage * 2, 9),
-      enemyScale: Math.min(1 + stage * 0.25, 1.75),
-      enemySpeed: Math.min(1.3 + stage * 0.2, 2.4),
-      throwInterval: Math.max(5 - stage * 0.5, 2.5),
+      enemyHp: Math.round(3 * growth),
       duration: 0,
       castleHp: 0,
       title: `Niveau ${n} : Chasse aux bonshommes`,
@@ -27,13 +43,10 @@ export function getLevelConfig(level: number): LevelConfig {
   }
 
   return {
-    number: n,
+    ...common,
     mode: 'defend',
-    enemyCount: Math.min(8 + stage * 2, 16),
-    enemyHp: Math.min(2 + stage, 6),
-    enemySpeed: Math.min(1.4 + stage * 0.15, 2.4),
-    enemyScale: Math.min(0.9 + stage * 0.15, 1.5),
-    throwInterval: Math.max(6 - stage * 0.5, 3),
+    enemyCount: Math.min(8 + Math.floor(d / 2), 16),
+    enemyHp: Math.max(2, Math.round(2 * growth)),
     duration: 60,
     castleHp: 100,
     title: `Niveau ${n} : Défends le château`,

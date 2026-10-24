@@ -1,398 +1,193 @@
 import React, { useState } from 'react';
-import confetti from 'canvas-confetti';
-import { Volume2, CheckCircle, Sparkles, X, Wrench, Lock, ArrowRight, RotateCcw } from 'lucide-react';
-import { UpgradeItem, CurriculumItem } from '../types';
-import { speakFrench, playSuccessChime, playUpgradeUnlock } from '../audio/soundEffects';
+import { X, Wrench, Lock, CheckCircle, Zap } from 'lucide-react';
+import { CurriculumItem, DifficultyLevel, UpgradeCategory, UpgradeItem } from '../types';
+import { CATEGORIES, describeBonus, tierMinLevel } from '../data/upgrades';
+import { pickChallenges } from '../data/curriculum';
+import { ChallengeRunner, ChallengeResult } from './ChallengeRunner';
 
 interface WorkshopModalProps {
   isOpen: boolean;
   onClose: () => void;
   upgrades: UpgradeItem[];
-  onUnlockUpgrade: (upgradeId: string, word: string, mode: 'read' | 'write') => void;
+  power: number;
+  gameLevel: number;
+  nextGate: { level: number; required: number } | null;
+  difficulty: DifficultyLevel;
+  masteredWords: string[];
+  onUnlockUpgrade: (upgradeId: string, results: ChallengeResult[]) => void;
   onEquipUpgrade: (upgradeId: string) => void;
-  snowCollected: number;
+  onAnswer: (correct: boolean) => void;
 }
 
 export const WorkshopModal: React.FC<WorkshopModalProps> = ({
   isOpen,
   onClose,
   upgrades,
+  power,
+  gameLevel,
+  nextGate,
+  difficulty,
+  masteredWords,
   onUnlockUpgrade,
   onEquipUpgrade,
-  snowCollected,
+  onAnswer,
 }) => {
-  const [selectedUpgrade, setSelectedUpgrade] = useState<UpgradeItem | null>(null);
-  const [challengeMode, setChallengeMode] = useState<'read' | 'write'>('read');
-  const [writtenLetters, setWrittenLetters] = useState<string[]>([]);
-  const [feedback, setFeedback] = useState<{ isSuccess: boolean; msg: string } | null>(null);
+  const [category, setCategory] = useState<UpgradeCategory>('canon');
+  const [challenge, setChallenge] = useState<{ upgrade: UpgradeItem; items: CurriculumItem[]; key: number } | null>(null);
 
   if (!isOpen) return null;
 
-  const handleSelectUpgrade = (upgrade: UpgradeItem) => {
-    setSelectedUpgrade(upgrade);
-    setWrittenLetters([]);
-    setFeedback(null);
-    setChallengeMode(upgrade.challengeRequired.type === 'sentence' ? 'read' : 'write');
+  const startChallenge = (upgrade: UpgradeItem) => {
+    setChallenge({ upgrade, items: pickChallenges(difficulty, upgrade.challenges, masteredWords), key: Date.now() });
   };
 
-  const currentChallenge = selectedUpgrade?.challengeRequired;
-
-  const handleSyllableClick = (syl: string) => {
-    speakFrench(syl);
-  };
-
-  const handleFullSpeak = () => {
-    if (currentChallenge) {
-      speakFrench(currentChallenge.content);
-    }
-  };
-
-  const handleAddLetter = (letter: string, index: number) => {
-    if (!currentChallenge || !currentChallenge.scrambled) return;
-    setWrittenLetters(prev => [...prev, letter]);
-    speakFrench(letter);
-  };
-
-  const handleRemoveLetter = (index: number) => {
-    setWrittenLetters(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const handleResetLetters = () => {
-    setWrittenLetters([]);
-    setFeedback(null);
-  };
-
-  const handleValidateReading = () => {
-    if (!selectedUpgrade || !currentChallenge) return;
-
-    confetti({
-      particleCount: 80,
-      spread: 70,
-      origin: { y: 0.6 },
-    });
-    playSuccessChime();
-    playUpgradeUnlock();
-
-    setFeedback({
-      isSuccess: true,
-      msg: '🎉 Bravo petit champion ! Tu as lu comme un chef !',
-    });
-    speakFrench(`Bravo ! Tu as débloqué ${selectedUpgrade.name} !`);
-
-    setTimeout(() => {
-      onUnlockUpgrade(selectedUpgrade.id, currentChallenge.content, 'read');
-      setSelectedUpgrade(null);
-    }, 1600);
-  };
-
-  const handleValidateWriting = () => {
-    if (!selectedUpgrade || !currentChallenge) return;
-    const formedWord = writtenLetters.join('');
-    const targetWord = currentChallenge.content.replace(/\s+/g, '').toUpperCase();
-
-    if (formedWord.toUpperCase() === targetWord) {
-      confetti({
-        particleCount: 100,
-        spread: 80,
-        origin: { y: 0.6 },
-      });
-      playSuccessChime();
-      playUpgradeUnlock();
-
-      setFeedback({
-        isSuccess: true,
-        msg: '⭐ Merveilleux ! Mot parfaitement orthographié !',
-      });
-      speakFrench(`Félicitations ! Le mot ${currentChallenge.content} est parfait !`);
-
-      setTimeout(() => {
-        onUnlockUpgrade(selectedUpgrade.id, currentChallenge.content, 'write');
-        setSelectedUpgrade(null);
-      }, 1600);
-    } else {
-      setFeedback({
-        isSuccess: false,
-        msg: 'Oups, ce n\'est pas tout à fait ça. Réessaye doucement !',
-      });
-      speakFrench("Réessaye doucement, tu peux y arriver !");
-    }
-  };
+  const unlockedCount = upgrades.filter((u) => u.unlocked).length;
+  const visible = upgrades.filter((u) => u.category === category).sort((a, b) => a.tier - b.tier);
+  const gateMissing = nextGate ? Math.max(0, nextGate.required - power) : 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/75 backdrop-blur-sm">
-      <div className="relative w-full max-w-2xl bg-gradient-to-b from-sky-900 to-indigo-950 rounded-3xl border-4 border-amber-300 shadow-2xl p-5 text-white max-h-[92vh] overflow-y-auto flex flex-col">
-        {/* Close Button */}
+      <div className="relative w-full max-w-2xl bg-gradient-to-b from-sky-900 to-indigo-950 rounded-3xl border-4 border-amber-300 shadow-2xl p-4 sm:p-5 text-white max-h-[94vh] overflow-y-auto flex flex-col gap-3">
         <button
-          onClick={onClose}
-          className="absolute top-4 right-4 w-10 h-10 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center border-2 border-white shadow-md active:scale-90 transition-transform cursor-pointer"
+          onClick={() => {
+            setChallenge(null);
+            onClose();
+          }}
+          className="absolute top-3 right-3 w-10 h-10 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center border-2 border-white shadow-md active:scale-90 transition-transform cursor-pointer"
         >
           <X className="w-6 h-6" />
         </button>
 
-        {/* Header */}
-        <div className="text-center mb-4">
-          <div className="inline-flex items-center gap-2 bg-amber-400/20 px-4 py-1.5 rounded-full border border-amber-300/40 text-amber-300 font-bold text-sm mb-1">
+        <div className="text-center pr-8 sm:pr-0">
+          <div className="inline-flex items-center gap-2 bg-amber-400/20 px-3 py-1 rounded-full border border-amber-300/40 text-amber-300 font-bold text-xs mb-1">
             <Wrench className="w-4 h-4" />
             Atelier de l'Inventeur Polaire
           </div>
-          <h2 className="text-2xl sm:text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-white to-sky-200 drop-shadow">
-            Améliore ton Robot !
-          </h2>
-          <p className="text-xs sm:text-sm text-sky-200 mt-1">
-            Lis ou écris des mots magiques pour débloquer de super pouvoirs ! ❄️
-          </p>
+          <h2 className="text-xl sm:text-2xl font-extrabold">Améliore ton Robot en lisant !</h2>
         </div>
 
-        {/* Main Content: List or Challenge */}
-        {!selectedUpgrade ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-1">
-            {upgrades.map((upgrade) => {
-              const isEquipped = upgrade.equipped;
-              const isUnlocked = upgrade.unlocked;
+        {/* Puissance du robot */}
+        <div className="flex flex-wrap items-center justify-center gap-2 text-xs font-bold">
+          <span className="flex items-center gap-1 bg-amber-400 text-slate-950 px-3 py-1.5 rounded-full">
+            <Zap className="w-4 h-4" /> Puissance {power}
+          </span>
+          <span className="bg-sky-800/80 px-3 py-1.5 rounded-full border border-sky-500/50">
+            🔧 {unlockedCount} / {upgrades.length} améliorations
+          </span>
+          {nextGate && (
+            <span
+              className={`px-3 py-1.5 rounded-full border ${
+                gateMissing > 0 ? 'bg-rose-900/70 border-rose-400 text-rose-100' : 'bg-emerald-900/70 border-emerald-400 text-emerald-100'
+              }`}
+            >
+              🚧 Niveau {nextGate.level} : ⚡ {nextGate.required}
+              {gateMissing > 0 ? ` (il manque ${gateMissing})` : ' ✓'}
+            </span>
+          )}
+        </div>
 
-              return (
-                <div
-                  key={upgrade.id}
-                  className={`p-4 rounded-2xl border-3 flex flex-col justify-between transition-all ${
-                    isUnlocked
-                      ? 'bg-sky-800/60 border-cyan-400 shadow-md'
-                      : 'bg-indigo-950/80 border-indigo-700/80 hover:border-amber-400/80'
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="text-4xl p-2 rounded-2xl bg-white/10 border border-white/20">
-                      {upgrade.icon}
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <h3 className="font-bold text-base text-white">{upgrade.name}</h3>
-                        {isUnlocked && <CheckCircle className="w-4 h-4 text-emerald-400" />}
+        {challenge ? (
+          <ChallengeRunner
+            key={challenge.key}
+            upgrade={challenge.upgrade}
+            items={challenge.items}
+            onAnswer={onAnswer}
+            onCancel={() => setChallenge(null)}
+            onComplete={(results) => {
+              onUnlockUpgrade(challenge.upgrade.id, results);
+              setChallenge(null);
+            }}
+          />
+        ) : (
+          <>
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+              {CATEGORIES.map((c) => {
+                const total = upgrades.filter((u) => u.category === c.id);
+                const done = total.filter((u) => u.unlocked).length;
+                return (
+                  <button
+                    key={c.id}
+                    onClick={() => setCategory(c.id)}
+                    className={`py-1.5 rounded-xl text-xs font-bold flex flex-col items-center cursor-pointer transition-colors ${
+                      category === c.id ? 'bg-cyan-500 text-sky-950' : 'bg-slate-900/60 text-sky-200 hover:bg-slate-800'
+                    }`}
+                  >
+                    <span className="text-lg leading-none">{c.icon}</span>
+                    {c.label}
+                    <span className="text-[10px] opacity-80">
+                      {done}/{total.length}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {visible.map((u) => {
+                const minLevel = tierMinLevel(u.tier);
+                const levelLocked = gameLevel < minLevel;
+                return (
+                  <div
+                    key={u.id}
+                    className={`p-3 rounded-2xl border-2 flex flex-col gap-2 ${
+                      u.unlocked
+                        ? 'bg-sky-800/60 border-cyan-400'
+                        : levelLocked
+                        ? 'bg-slate-900/60 border-slate-700 opacity-60'
+                        : 'bg-indigo-950/80 border-indigo-600 hover:border-amber-400'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <div className="text-3xl p-1.5 rounded-xl bg-white/10 border border-white/20">{u.icon}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1">
+                          <h3 className="font-bold text-sm">{u.name}</h3>
+                          {u.unlocked && <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />}
+                        </div>
+                        <p className="text-[11px] text-sky-200 leading-snug">{u.description}</p>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          <span className="text-[10px] font-semibold text-amber-300 bg-amber-950/50 px-1.5 py-0.5 rounded border border-amber-400/30">
+                            {describeBonus(u)}
+                          </span>
+                          <span className="text-[10px] font-semibold text-yellow-200 bg-yellow-900/40 px-1.5 py-0.5 rounded">
+                            ⚡ +{u.power}
+                          </span>
+                        </div>
                       </div>
-                      <p className="text-xs text-sky-200 mt-0.5 leading-snug">
-                        {upgrade.description}
-                      </p>
-                      <span className="inline-block mt-1 text-[11px] font-semibold text-amber-300 bg-amber-950/50 px-2 py-0.5 rounded-md border border-amber-400/30">
-                        {upgrade.bonus}
-                      </span>
                     </div>
-                  </div>
 
-                  <div className="mt-3 pt-2 border-t border-white/10 flex items-center justify-between">
-                    {isUnlocked ? (
-                      <button
-                        onClick={() => onEquipUpgrade(upgrade.id)}
-                        className={`w-full py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                          isEquipped
-                            ? 'bg-emerald-500 text-white shadow-inner'
-                            : 'bg-cyan-500 hover:bg-cyan-400 text-sky-950'
-                        }`}
-                      >
-                        {isEquipped ? 'Équipé sur le Robot ✓' : 'Équiper maintenant'}
-                      </button>
+                    {u.unlocked ? (
+                      u.paint !== undefined || u.crown ? (
+                        <button
+                          onClick={() => onEquipUpgrade(u.id)}
+                          className={`w-full py-1.5 rounded-xl font-bold text-xs cursor-pointer ${
+                            u.equipped ? 'bg-emerald-500 text-white' : 'bg-cyan-500 hover:bg-cyan-400 text-sky-950'
+                          }`}
+                        >
+                          {u.equipped ? 'Porté par le robot ✓' : 'Mettre sur le robot'}
+                        </button>
+                      ) : (
+                        <div className="w-full py-1.5 rounded-xl font-bold text-xs text-center bg-emerald-600/40 text-emerald-100">
+                          Installé sur le robot ✓
+                        </div>
+                      )
+                    ) : levelLocked ? (
+                      <div className="w-full py-1.5 rounded-xl font-bold text-xs text-center bg-slate-800 text-slate-300 flex items-center justify-center gap-1">
+                        <Lock className="w-3.5 h-3.5" /> Disponible au niveau {minLevel}
+                      </div>
                     ) : (
                       <button
-                        onClick={() => handleSelectUpgrade(upgrade)}
-                        className="w-full py-2.5 px-3 rounded-xl font-extrabold text-xs bg-gradient-to-r from-amber-400 to-orange-500 hover:brightness-110 text-slate-950 shadow-md flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+                        onClick={() => startChallenge(u)}
+                        className="w-full py-2 rounded-xl font-extrabold text-xs bg-gradient-to-r from-amber-400 to-orange-500 hover:brightness-110 text-slate-950 active:scale-95 transition-all cursor-pointer"
                       >
-                        <Lock className="w-4 h-4" />
-                        Débloquer le défi lecture / écriture
+                        Débloquer : {u.challenges} défi{u.challenges > 1 ? 's' : ''} 📖✍️
                       </button>
                     )}
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          /* Challenge Screen */
-          <div className="bg-sky-950/90 rounded-2xl p-5 border-2 border-sky-400/60 flex flex-col gap-4">
-            <div className="flex items-center justify-between border-b border-sky-800 pb-2">
-              <div className="flex items-center gap-2">
-                <span className="text-3xl">{selectedUpgrade.icon}</span>
-                <div>
-                  <h3 className="font-extrabold text-lg text-amber-300">
-                    Défi : {selectedUpgrade.name}
-                  </h3>
-                  <p className="text-xs text-sky-200">
-                    Niveau : {currentChallenge?.level.toUpperCase()} • Catégorie : {currentChallenge?.category}
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setSelectedUpgrade(null)}
-                className="text-xs font-bold text-sky-300 hover:text-white underline cursor-pointer"
-              >
-                Retour à la liste
-              </button>
+                );
+              })}
             </div>
-
-            {/* Hint & Speech */}
-            <div className="flex items-center justify-between bg-sky-900/60 p-3 rounded-xl border border-sky-600/40">
-              <div className="flex-1 pr-2">
-                <p className="text-xs text-amber-200 font-medium">
-                  💡 Indice : {currentChallenge?.hint}
-                </p>
-              </div>
-              <button
-                onClick={handleFullSpeak}
-                className="flex items-center gap-1.5 bg-cyan-600 hover:bg-cyan-500 px-3 py-1.5 rounded-lg text-xs font-bold shadow active:scale-90 transition-transform cursor-pointer"
-              >
-                <Volume2 className="w-4 h-4" />
-                Écouter
-              </button>
-            </div>
-
-            {/* Mode selection tabs if word */}
-            {currentChallenge?.type === 'word' && (
-              <div className="flex rounded-xl bg-slate-900/60 p-1 border border-slate-700">
-                <button
-                  onClick={() => setChallengeMode('read')}
-                  className={`flex-1 py-1.5 rounded-lg font-bold text-xs transition-colors cursor-pointer ${
-                    challengeMode === 'read' ? 'bg-cyan-500 text-sky-950' : 'text-sky-300'
-                  }`}
-                >
-                  📖 Défi Lecture (Syllabes)
-                </button>
-                <button
-                  onClick={() => setChallengeMode('write')}
-                  className={`flex-1 py-1.5 rounded-lg font-bold text-xs transition-colors cursor-pointer ${
-                    challengeMode === 'write' ? 'bg-cyan-500 text-sky-950' : 'text-sky-300'
-                  }`}
-                >
-                  ✍️ Défi Écriture (Assembler)
-                </button>
-              </div>
-            )}
-
-            {/* READING MODE */}
-            {challengeMode === 'read' && currentChallenge && (
-              <div className="text-center py-4">
-                <p className="text-xs text-sky-300 mb-2 font-semibold">
-                  Touche chaque syllabe pour entendre le son, puis lis le mot tout seul !
-                </p>
-
-                {currentChallenge.syllables ? (
-                  <div className="flex justify-center gap-3 my-4">
-                    {currentChallenge.syllables.map((syl, i) => (
-                      <button
-                        key={i}
-                        onClick={() => handleSyllableClick(syl)}
-                        className="px-5 py-3 rounded-2xl bg-gradient-to-b from-sky-400 to-blue-600 hover:from-cyan-300 hover:to-blue-500 border-3 border-white text-2xl font-black text-white shadow-lg active:scale-95 transition-transform cursor-pointer"
-                      >
-                        {syl}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="my-4 p-4 rounded-2xl bg-white/10 border-2 border-cyan-400 text-2xl sm:text-3xl font-extrabold tracking-wide">
-                    {currentChallenge.content}
-                  </div>
-                )}
-
-                <p className="text-xs text-sky-200 italic my-2">
-                  "{currentChallenge.explanation}"
-                </p>
-
-                <button
-                  onClick={handleValidateReading}
-                  className="mt-3 px-6 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:brightness-110 text-slate-950 font-extrabold text-base shadow-xl flex items-center justify-center gap-2 mx-auto active:scale-95 transition-all cursor-pointer"
-                >
-                  <Sparkles className="w-5 h-5 text-amber-200" />
-                  J'ai réussi à le lire !
-                </button>
-              </div>
-            )}
-
-            {/* WRITING / SPELLING PUZZLE MODE */}
-            {challengeMode === 'write' && currentChallenge && (
-              <div className="text-center py-2">
-                <p className="text-xs text-sky-300 mb-2 font-semibold">
-                  Touche les lettres dans le bon ordre pour écrire le mot !
-                </p>
-
-                {/* Slots for written letters */}
-                <div className="flex justify-center gap-2 my-3 min-h-[56px] items-center">
-                  {Array.from({ length: currentChallenge.content.length }).map((_, idx) => {
-                    const letter = writtenLetters[idx];
-                    return (
-                      <div
-                        key={idx}
-                        onClick={() => letter && handleRemoveLetter(idx)}
-                        className={`w-12 h-14 rounded-xl border-3 flex items-center justify-center text-2xl font-black transition-all cursor-pointer ${
-                          letter
-                            ? 'bg-amber-400 border-amber-200 text-slate-950 shadow-md animate-bounce-subtle'
-                            : 'bg-sky-950/50 border-sky-500/50 text-sky-400/40'
-                        }`}
-                      >
-                        {letter || '_'}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Scrambled letter buttons */}
-                <div className="flex flex-wrap justify-center gap-2 my-3">
-                  {currentChallenge.scrambled?.map((char, index) => {
-                    // Check if already used
-                    const usedCount = writtenLetters.filter(l => l === char).length;
-                    const availableCount = currentChallenge.scrambled!.filter(l => l === char).length;
-                    const isAllUsed = usedCount >= availableCount;
-
-                    return (
-                      <button
-                        key={index}
-                        disabled={isAllUsed}
-                        onClick={() => handleAddLetter(char, index)}
-                        className={`w-12 h-12 rounded-xl text-xl font-black border-2 transition-all cursor-pointer ${
-                          isAllUsed
-                            ? 'bg-slate-800 border-slate-700 text-slate-600 opacity-40 cursor-not-allowed'
-                            : 'bg-cyan-500 hover:bg-cyan-400 border-white text-sky-950 shadow-md active:scale-90'
-                        }`}
-                      >
-                        {char}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Controls */}
-                <div className="flex justify-center gap-3 mt-3">
-                  <button
-                    onClick={handleResetLetters}
-                    className="px-4 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-xs font-bold text-sky-200 flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <RotateCcw className="w-4 h-4" />
-                    Effacer
-                  </button>
-                  <button
-                    onClick={handleValidateWriting}
-                    disabled={writtenLetters.length !== currentChallenge.content.length}
-                    className={`px-6 py-2.5 rounded-xl font-extrabold text-sm flex items-center gap-2 transition-all cursor-pointer ${
-                      writtenLetters.length === currentChallenge.content.length
-                        ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 shadow-lg active:scale-95'
-                        : 'bg-slate-700 text-slate-400 opacity-50 cursor-not-allowed'
-                    }`}
-                  >
-                    <CheckCircle className="w-5 h-5" />
-                    Vérifier mon mot !
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Feedback alert */}
-            {feedback && (
-              <div
-                className={`p-3 rounded-xl text-center font-bold text-sm border-2 animate-fade-in ${
-                  feedback.isSuccess
-                    ? 'bg-emerald-900/80 border-emerald-400 text-emerald-200'
-                    : 'bg-rose-900/80 border-rose-400 text-rose-200'
-                }`}
-              >
-                {feedback.msg}
-              </div>
-            )}
-          </div>
+          </>
         )}
       </div>
     </div>

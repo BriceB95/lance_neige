@@ -1,187 +1,156 @@
-import { CurriculumItem, UpgradeItem, Trophy, StickerReward } from '../types';
+import { CurriculumItem, DifficultyLevel, Trophy, StickerReward } from '../types';
+
+const slug = (s: string) =>
+  s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+
+const word = (
+  level: DifficultyLevel,
+  content: string,
+  emoji: string,
+  syllables: string[],
+  hint: string,
+  explanation?: string
+): CurriculumItem => ({ id: `word-${slug(content)}`, level, type: 'word', content, emoji, syllables, hint, explanation });
+
+const sentence = (level: DifficultyLevel, content: string, emoji: string, hint: string): CurriculumItem => ({
+  id: `sent-${slug(content)}`,
+  level,
+  type: 'sentence',
+  content,
+  emoji,
+  hint,
+  explanation: 'Une phrase commence par une majuscule et se termine par un point.',
+});
 
 export const CURRICULUM_ITEMS: CurriculumItem[] = [
-  // Niveau 1 - CP (Mots simples phonétiques)
-  {
-    id: 'word-neige',
-    level: 'cp1',
-    type: 'word',
-    content: 'NEIGE',
-    syllables: ['NEI', 'GE'],
-    scrambled: ['E', 'N', 'I', 'G', 'E'],
-    hint: 'Blanche et froide, elle tombe du ciel en hiver !',
-    category: 'neige',
-    explanation: 'Le son "ei" fait comme dans reine ou neige.'
-  },
-  {
-    id: 'word-robot',
-    level: 'cp1',
-    type: 'word',
-    content: 'ROBOT',
-    syllables: ['RO', 'BOT'],
-    scrambled: ['T', 'O', 'B', 'O', 'R'],
-    hint: 'Ton super ami en métal qui adore la neige !',
-    category: 'robot',
-    explanation: 'Le mot robot a deux syllabes : RO et BOT. Le T muet dort à la fin !'
-  },
-  {
-    id: 'word-glace',
-    level: 'cp1',
-    type: 'word',
-    content: 'GLACE',
-    syllables: ['GLA', 'CE'],
-    scrambled: ['A', 'C', 'L', 'E', 'G'],
-    hint: 'Très froide et glissante sur le lac !',
-    category: 'neige',
-    explanation: 'Le C devant le E fait le son "ss" comme dans glace !'
-  },
-  {
-    id: 'word-ami',
-    level: 'cp1',
-    type: 'word',
-    content: 'AMI',
-    syllables: ['A', 'MI'],
-    scrambled: ['I', 'M', 'A'],
-    hint: 'Une personne gentille avec qui on joue dans la cour !',
-    category: 'aventure',
-    explanation: 'Un mot tout court et doux avec 2 syllabes faciles : A - MI.'
-  },
-  {
-    id: 'word-etoile',
-    level: 'cp2',
-    type: 'word',
-    content: 'ÉTOILE',
-    syllables: ['É', 'TOI', 'LE'],
-    scrambled: ['L', 'E', 'É', 'T', 'O', 'I'],
-    hint: 'Elle brille tout en haut dans le ciel la nuit !',
-    category: 'aventure',
-    explanation: 'Le son "oi" fait [wa] comme dans oiseau ou étoile !'
-  },
-  {
-    id: 'word-ours',
-    level: 'cp2',
-    type: 'word',
-    content: 'OURS',
-    syllables: ['OURS'],
-    scrambled: ['S', 'U', 'R', 'O'],
-    hint: 'Le grand animal blanc qui vit sur la banquise.',
-    category: 'animaux',
-    explanation: 'Le son "ou" fait comme dans loup ou ours !'
-  },
-  {
-    id: 'sent-douce',
-    level: 'cp2',
-    type: 'sentence',
-    content: 'La neige est toute douce.',
-    hint: 'Lis bien chaque mot en faisant attention au point à la fin.',
-    category: 'neige',
-    explanation: 'Une belle phrase commence par une majuscule et se termine par un point !'
-  },
-  {
-    id: 'sent-bonhomme',
-    level: 'ce1',
-    type: 'sentence',
-    content: 'Le bonhomme de neige rigole.',
-    hint: 'Observe les bonshommes de neige farceurs qui esquivent tes boules !',
-    category: 'neige',
-    explanation: 'Le mot "bonhomme" a deux "m" bien costauds.'
-  },
-  {
-    id: 'word-chateau',
-    level: 'ce1',
-    type: 'word',
-    content: 'CHÂTEAU',
-    syllables: ['CHÂ', 'TEAU'],
-    scrambled: ['U', 'A', 'E', 'T', 'Â', 'H', 'C'],
-    hint: 'On en construit de magnifiques avec des blocs de glace !',
-    category: 'aventure',
-    explanation: 'Le son "o" s\'écrit "EAU" à la fin de château.'
-  },
-  {
-    id: 'sent-ami-robot',
-    level: 'ce1',
-    type: 'sentence',
-    content: 'Bip-Boop est le roi de la banquise.',
-    hint: 'Ton robot est le plus rapide pour ramasser les flocons !',
-    category: 'robot',
-    explanation: '"Banquise" prend un Q-U pour faire le son [k].'
-  }
+  // CP début : syllabes simples
+  word('cp1', 'ROBOT', '🤖', ['RO', 'BOT'], 'Ton super ami en métal !', 'Le T muet dort à la fin !'),
+  word('cp1', 'NEIGE', '❄️', ['NEI', 'GE'], 'Blanche et froide, elle tombe en hiver.', 'Le son "ei" comme dans reine.'),
+  word('cp1', 'GLACE', '🧊', ['GLA', 'CE'], 'Très froide et glissante.', 'Le C devant le E fait le son [s].'),
+  word('cp1', 'AMI', '🤝', ['A', 'MI'], 'Une personne gentille avec qui on joue.'),
+  word('cp1', 'LUNE', '🌙', ['LU', 'NE'], 'Elle brille dans le ciel la nuit.'),
+  word('cp1', 'VÉLO', '🚲', ['VÉ', 'LO'], 'Il a deux roues et des pédales.'),
+  word('cp1', 'MOTO', '🏍️', ['MO', 'TO'], 'Elle roule vite avec un moteur.'),
+  word('cp1', 'LAPIN', '🐰', ['LA', 'PIN'], 'Il a de grandes oreilles.'),
+  word('cp1', 'SAPIN', '🌲', ['SA', 'PIN'], 'Un arbre vert qu\'on décore à Noël.'),
+  word('cp1', 'TOMATE', '🍅', ['TO', 'MA', 'TE'], 'Un fruit rouge pour la salade.'),
+  word('cp1', 'SALADE', '🥗', ['SA', 'LA', 'DE'], 'Des feuilles vertes à manger.'),
+  word('cp1', 'PIRATE', '🏴‍☠️', ['PI', 'RA', 'TE'], 'Il cherche des trésors sur la mer.'),
+  word('cp1', 'TORTUE', '🐢', ['TOR', 'TUE'], 'Elle avance lentement avec sa carapace.'),
+  word('cp1', 'PIZZA', '🍕', ['PIZ', 'ZA'], 'Un plat rond avec du fromage.'),
+  word('cp1', 'CAROTTE', '🥕', ['CA', 'ROT', 'TE'], 'Le nez orange du bonhomme de neige !'),
+  word('cp1', 'CANARD', '🦆', ['CA', 'NARD'], 'Il fait coin-coin sur la mare.', 'Le D à la fin ne s\'entend pas.'),
+  word('cp1', 'KIWI', '🥝', ['KI', 'WI'], 'Un petit fruit vert et poilu.'),
+  word('cp1', 'TAXI', '🚕', ['TA', 'XI'], 'Une voiture jaune qui transporte les gens.'),
+  word('cp1', 'LIT', '🛏️', ['LIT'], 'On dort dedans.', 'Le T à la fin est muet.'),
+  word('cp1', 'RAT', '🐀', ['RAT'], 'Un petit animal avec une longue queue.'),
+  word('cp1', 'ÉCOLE', '🏫', ['É', 'CO', 'LE'], 'On y apprend à lire et à écrire.'),
+  word('cp1', 'PATATE', '🥔', ['PA', 'TA', 'TE'], 'On en fait des frites.'),
+  sentence('cp1', 'Le chat dort sur le lit.', '🐱', 'Où se repose le chat ?'),
+  sentence('cp1', 'Le lapin a une carotte.', '🐰', 'Qui a une carotte ?'),
+  sentence('cp1', 'Lili a un vélo.', '🚲', 'Qu\'est-ce que Lili a ?'),
+  sentence('cp1', 'La tortue va lentement.', '🐢', 'Qui avance doucement ?'),
+
+  // CP fin : ou, on, an, oi, ch, eau, ai, in
+  word('cp2', 'OURS', '🐻‍❄️', ['OURS'], 'Le grand animal blanc de la banquise.', 'Le son "ou" comme dans loup.'),
+  word('cp2', 'ÉTOILE', '⭐', ['É', 'TOI', 'LE'], 'Elle brille dans le ciel la nuit.', 'Le son "oi" comme dans oiseau.'),
+  word('cp2', 'MOUTON', '🐑', ['MOU', 'TON'], 'Il fait bêê et donne de la laine.'),
+  word('cp2', 'POISSON', '🐟', ['POIS', 'SON'], 'Il nage dans l\'eau.', 'Deux S entre deux voyelles font le son [s].'),
+  word('cp2', 'CHAT', '🐱', ['CHAT'], 'Il fait miaou.', 'Le T à la fin est muet.'),
+  word('cp2', 'CHIEN', '🐶', ['CHIEN'], 'Il fait wouf et remue la queue.'),
+  word('cp2', 'MAISON', '🏠', ['MAI', 'SON'], 'On habite dedans.', 'Un seul S entre deux voyelles fait le son [z].'),
+  word('cp2', 'BALLON', '⚽', ['BAL', 'LON'], 'On joue au foot avec.'),
+  word('cp2', 'GÂTEAU', '🎂', ['GÂ', 'TEAU'], 'On souffle les bougies dessus.', 'Le son "o" s\'écrit EAU à la fin.'),
+  word('cp2', 'OISEAU', '🐦', ['OI', 'SEAU'], 'Il vole avec ses ailes.'),
+  word('cp2', 'BATEAU', '⛵', ['BA', 'TEAU'], 'Il flotte sur la mer.'),
+  word('cp2', 'LOUP', '🐺', ['LOUP'], 'Il hurle à la lune.', 'Le P à la fin est muet.'),
+  word('cp2', 'DRAGON', '🐉', ['DRA', 'GON'], 'Il crache du feu dans les contes.'),
+  word('cp2', 'LION', '🦁', ['LI', 'ON'], 'Le roi des animaux.'),
+  word('cp2', 'COCHON', '🐷', ['CO', 'CHON'], 'Il est rose et fait groin-groin.'),
+  word('cp2', 'CHAPEAU', '🎩', ['CHA', 'PEAU'], 'On le met sur la tête.'),
+  word('cp2', 'BONBON', '🍬', ['BON', 'BON'], 'Une petite sucrerie.'),
+  word('cp2', 'MOUFLE', '🧤', ['MOU', 'FLE'], 'Elle garde la main au chaud.'),
+  word('cp2', 'ÉCHARPE', '🧣', ['É', 'CHAR', 'PE'], 'On l\'enroule autour du cou.'),
+  word('cp2', 'FUSÉE', '🚀', ['FU', 'SÉE'], 'Elle part dans l\'espace.'),
+  word('cp2', 'HIBOU', '🦉', ['HI', 'BOU'], 'Il ouvre ses grands yeux la nuit.', 'Le H du début ne fait pas de bruit.'),
+  word('cp2', 'RENARD', '🦊', ['RE', 'NARD'], 'Un animal roux et rusé.'),
+  word('cp2', 'FLOCON', '🌨️', ['FLO', 'CON'], 'Un petit morceau de neige qui tombe.'),
+  word('cp2', 'LUTIN', '🧝', ['LU', 'TIN'], 'Il aide le Père Noël.'),
+  word('cp2', 'PINGOUIN', '🐧', ['PIN', 'GOUIN'], 'Un oiseau noir et blanc de la banquise.'),
+  word('cp2', 'ORANGE', '🍊', ['O', 'RAN', 'GE'], 'Un fruit rond plein de jus.'),
+  word('cp2', 'CHOCOLAT', '🍫', ['CHO', 'CO', 'LAT'], 'Une gourmandise marron.'),
+  sentence('cp2', 'La neige est toute douce.', '❄️', 'Comment est la neige ?'),
+  sentence('cp2', 'Le poisson nage dans l\'eau.', '🐟', 'Qui nage ?'),
+  sentence('cp2', 'Le bateau flotte sur la mer.', '⛵', 'Qu\'est-ce qui flotte ?'),
+  sentence('cp2', 'Le hibou chante la nuit.', '🦉', 'Qui chante la nuit ?'),
+  sentence('cp2', 'Le dragon crache du feu.', '🐉', 'Qui crache du feu ?'),
+  sentence('cp2', 'La fusée part dans le ciel.', '🚀', 'Qu\'est-ce qui part dans le ciel ?'),
+  sentence('cp2', 'Le pingouin glisse sur la glace.', '🐧', 'Qui glisse ?'),
+  sentence('cp2', 'Le loup a faim ce soir.', '🐺', 'Qui a faim ?'),
+
+  // CE1 : sons complexes (ph, gn, ill, eil, euil...)
+  word('ce1', 'CHÂTEAU', '🏰', ['CHÂ', 'TEAU'], 'Le roi et la reine y habitent.', 'Le son "o" s\'écrit EAU à la fin.'),
+  word('ce1', 'BONHOMME', '⛄', ['BON', 'HOMME'], 'On le fabrique avec de la neige.', 'Bonhomme prend deux M.'),
+  word('ce1', 'ÉLÉPHANT', '🐘', ['É', 'LÉ', 'PHANT'], 'Il a une trompe et de grandes oreilles.', 'PH fait le son [f].'),
+  word('ce1', 'TRAÎNEAU', '🛷', ['TRAÎ', 'NEAU'], 'Il glisse sur la neige.'),
+  word('ce1', 'MONTAGNE', '🏔️', ['MON', 'TA', 'GNE'], 'Très haute, avec de la neige en haut.', 'GN chante comme dans agneau.'),
+  word('ce1', 'GRENOUILLE', '🐸', ['GRE', 'NOUIL', 'LE'], 'Elle saute et fait croa-croa.', 'ILL fait le son [j].'),
+  word('ce1', 'PAPILLON', '🦋', ['PA', 'PIL', 'LON'], 'Il a de jolies ailes colorées.'),
+  word('ce1', 'ÉCUREUIL', '🐿️', ['É', 'CU', 'REUIL'], 'Il cache des noisettes.'),
+  word('ce1', 'SOLEIL', '☀️', ['SO', 'LEIL'], 'Il nous chauffe et nous éclaire.', 'EIL comme dans réveil.'),
+  word('ce1', 'PARAPLUIE', '☂️', ['PA', 'RA', 'PLUIE'], 'Il protège de la pluie.'),
+  word('ce1', 'CROCODILE', '🐊', ['CRO', 'CO', 'DI', 'LE'], 'Il a beaucoup de dents.'),
+  word('ce1', 'CITROUILLE', '🎃', ['CI', 'TROUIL', 'LE'], 'Une grosse courge orange.', 'Le C devant I fait le son [s].'),
+  word('ce1', 'ORDINATEUR', '💻', ['OR', 'DI', 'NA', 'TEUR'], 'Une machine avec un écran et un clavier.'),
+  word('ce1', 'DAUPHIN', '🐬', ['DAU', 'PHIN'], 'Il saute dans la mer.', 'PH fait le son [f].'),
+  word('ce1', 'BALEINE', '🐋', ['BA', 'LEI', 'NE'], 'Le plus gros animal de la mer.'),
+  word('ce1', 'CHAUSSURE', '👟', ['CHAUS', 'SU', 'RE'], 'On la met au pied.'),
+  word('ce1', 'GIRAFE', '🦒', ['GI', 'RA', 'FE'], 'Elle a un très long cou.', 'Le G devant I fait le son [ʒ].'),
+  word('ce1', 'KANGOUROU', '🦘', ['KAN', 'GOU', 'ROU'], 'Il saute avec son bébé dans sa poche.'),
+  word('ce1', 'HÉLICOPTÈRE', '🚁', ['HÉ', 'LI', 'COP', 'TÈ', 'RE'], 'Il vole avec des hélices.'),
+  sentence('ce1', 'Le bonhomme de neige rigole.', '⛄', 'Qui rigole ?'),
+  sentence('ce1', 'Bip-Boop est le roi de la banquise.', '🤖', 'Qui est le roi ?'),
+  sentence('ce1', 'Le soleil brille très fort.', '☀️', 'Qu\'est-ce qui brille ?'),
+  sentence('ce1', 'Je mets mon bonnet et mes moufles.', '🧤', 'Qu\'est-ce que je mets ?'),
+  sentence('ce1', 'Le papillon vole de fleur en fleur.', '🦋', 'Qui vole ?'),
+  sentence('ce1', 'La grenouille saute dans la mare.', '🐸', 'Qui saute ?'),
+  sentence('ce1', 'Le traîneau glisse vite sur la neige.', '🛷', 'Qu\'est-ce qui glisse ?'),
+  sentence('ce1', 'Le dauphin joue avec les vagues.', '🐬', 'Qui joue dans l\'eau ?'),
 ];
 
-export const INITIAL_UPGRADES: UpgradeItem[] = [
-  {
-    id: 'upgrade-tank',
-    name: 'Réservoir XL Glacé',
-    icon: '❄️',
-    description: 'Permet de stocker 20 boules de neige au lieu de 10 !',
-    costSnow: 15,
-    unlocked: false,
-    equipped: false,
-    type: 'tank',
-    bonus: 'Capacité maximale +10 boules',
-    challengeRequired: CURRICULUM_ITEMS[2] // GLACE
-  },
-  {
-    id: 'upgrade-speed',
-    name: 'Chenilles Turbo Polaires',
-    icon: '⚡',
-    description: 'Le robot file à toute allure sur la neige fraîche !',
-    costSnow: 20,
-    unlocked: false,
-    equipped: false,
-    type: 'speed',
-    bonus: 'Vitesse de déplacement +35%',
-    challengeRequired: CURRICULUM_ITEMS[1] // ROBOT
-  },
-  {
-    id: 'upgrade-cannon',
-    name: 'Super Lanceur Double',
-    icon: '🎯',
-    description: 'Tire 2 boules de neige scintillantes à la fois !',
-    costSnow: 25,
-    unlocked: false,
-    equipped: false,
-    type: 'cannon',
-    bonus: 'Tir double automatique',
-    challengeRequired: CURRICULUM_ITEMS[6] // La neige est toute douce
-  },
-  {
-    id: 'upgrade-shield',
-    name: 'Écharpe Bouclier Magique',
-    icon: '🧣',
-    description: 'Une douce écharpe qui absorbe les éclaboussures de neige !',
-    costSnow: 30,
-    unlocked: false,
-    equipped: false,
-    type: 'shield',
-    bonus: 'Barrière de protection contre les tirs',
-    challengeRequired: CURRICULUM_ITEMS[4] // ÉTOILE
-  },
-  {
-    id: 'upgrade-gold',
-    name: 'Armure Dorée Étincelante',
-    icon: '👑',
-    description: 'Le robot brille comme un roi des neiges en or massif !',
-    costSnow: 35,
-    unlocked: false,
-    equipped: false,
-    type: 'cosmetic',
-    bonus: 'Style légendaire & étincelles au sol',
-    challengeRequired: CURRICULUM_ITEMS[8] // CHÂTEAU
-  },
-  {
-    id: 'upgrade-storm',
-    name: 'Méga Rafale de Flocons',
-    icon: '🌪️',
-    description: 'Des boules de neige géantes qui font danser les ennemis !',
-    costSnow: 40,
-    unlocked: false,
-    equipped: false,
-    type: 'cannon',
-    bonus: 'Boules géantes avec onde de choc',
-    challengeRequired: CURRICULUM_ITEMS[7] // Le bonhomme de neige rigole
+const LEVEL_ORDER: DifficultyLevel[] = ['cp1', 'cp2', 'ce1'];
+
+/**
+ * Choisit des défis adaptés au niveau scolaire réglé par le parent,
+ * en privilégiant les mots pas encore maîtrisés.
+ */
+export function pickChallenges(level: DifficultyLevel, count: number, mastered: string[]): CurriculumItem[] {
+  const maxIdx = LEVEL_ORDER.indexOf(level);
+  const pool = CURRICULUM_ITEMS.filter((c) => LEVEL_ORDER.indexOf(c.level) <= maxIdx);
+  const shuffle = <T,>(arr: T[]) => [...arr].sort(() => Math.random() - 0.5);
+  const fresh = pool.filter((c) => !mastered.includes(c.content));
+  // Surtout des mots du niveau actuel, un peu de révision des niveaux précédents
+  const current = shuffle(fresh.filter((c) => c.level === level));
+  const review = shuffle(fresh.filter((c) => c.level !== level));
+  const ordered = [...current, ...review, ...shuffle(pool)];
+  const picked: CurriculumItem[] = [];
+  for (const item of ordered) {
+    if (picked.length >= count) break;
+    if (!picked.includes(item)) picked.push(item);
   }
-];
+  return picked;
+}
+
+/** Deux images pièges différentes de la bonne réponse */
+export function pickDistractors(item: CurriculumItem, count = 2): string[] {
+  const emojis = Array.from(new Set(CURRICULUM_ITEMS.map((c) => c.emoji))).filter((e) => e !== item.emoji);
+  return emojis.sort(() => Math.random() - 0.5).slice(0, count);
+}
 
 export const TROPHIES_LIST: Trophy[] = [
   {

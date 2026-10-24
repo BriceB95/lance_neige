@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import confetti from 'canvas-confetti';
-import { RotateCcw, ArrowRight } from 'lucide-react';
+import { RotateCcw, ArrowRight, Wrench } from 'lucide-react';
 import { speakFrench, playCelebrationFanfare } from '../audio/soundEffects';
 
 interface LevelOverlayProps {
@@ -10,6 +10,9 @@ interface LevelOverlayProps {
   nextTitle: string;
   onNext: () => void;
   onRetry: () => void;
+  power: number;
+  requiredPower: number;
+  onOpenWorkshop: () => void;
 }
 
 export const LevelOverlay: React.FC<LevelOverlayProps> = ({
@@ -19,12 +22,21 @@ export const LevelOverlay: React.FC<LevelOverlayProps> = ({
   nextTitle,
   onNext,
   onRetry,
+  power,
+  requiredPower,
+  onOpenWorkshop,
 }) => {
+  const locked = status === 'won' && power < requiredPower;
+
   useEffect(() => {
     if (status === 'won') {
       confetti({ particleCount: 120, spread: 90, origin: { y: 0.6 } });
       playCelebrationFanfare();
-      speakFrench(`Bravo ! Tu as gagné le niveau ${level} !`);
+      speakFrench(
+        power < requiredPower
+          ? `Bravo ! Tu as gagné le niveau ${level} ! Mais les prochains bonshommes sont trop forts : améliore ton robot à l'atelier en lisant des mots !`
+          : `Bravo ! Tu as gagné le niveau ${level} !`
+      );
     } else if (status === 'lost') {
       speakFrench(
         failReason === 'castle'
@@ -48,6 +60,15 @@ export const LevelOverlay: React.FC<LevelOverlayProps> = ({
         <h2 className="text-2xl font-black">
           {won ? `Niveau ${level} réussi !` : `Niveau ${level} perdu`}
         </h2>
+        {locked && (
+          <div className="w-full rounded-2xl bg-rose-950/70 border-2 border-rose-400 p-3 text-sm">
+            <p className="font-black text-rose-200">🚧 Les bonshommes du niveau {level + 1} sont trop forts !</p>
+            <p className="text-rose-100 mt-1">
+              Il faut une puissance de <b>⚡ {requiredPower}</b>. Ton robot a <b>⚡ {power}</b>.
+            </p>
+            <p className="text-rose-100 mt-1">Lis et écris des mots à l'Atelier pour l'améliorer !</p>
+          </div>
+        )}
         <p className="text-sm text-sky-200 leading-snug">
           {won
             ? `Prochaine mission : ${nextTitle}`
@@ -55,6 +76,15 @@ export const LevelOverlay: React.FC<LevelOverlayProps> = ({
             ? 'Les bonshommes ont envahi le château. Tes récompenses sont gardées, réessaie !'
             : "Ton robot n'a plus d'énergie. Tes récompenses sont gardées, réessaie !"}
         </p>
+        {locked ? (
+          <button
+            onClick={onOpenWorkshop}
+            className="mt-2 w-full py-3 rounded-2xl font-black text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform cursor-pointer bg-gradient-to-r from-amber-400 to-orange-500 text-slate-950"
+          >
+            <Wrench className="w-5 h-5" />
+            Aller à l'Atelier
+          </button>
+        ) : (
         <button
           onClick={won ? onNext : onRetry}
           className={`mt-2 w-full py-3 rounded-2xl font-black text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform cursor-pointer ${
@@ -64,6 +94,7 @@ export const LevelOverlay: React.FC<LevelOverlayProps> = ({
           {won ? <ArrowRight className="w-5 h-5" /> : <RotateCcw className="w-5 h-5" />}
           {won ? 'Niveau suivant' : 'Recommencer le niveau'}
         </button>
+        )}
       </div>
     </div>
   );
