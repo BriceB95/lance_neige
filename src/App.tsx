@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { VirtualControls } from './components/VirtualControls';
 import { HUD } from './components/HUD';
@@ -7,7 +7,9 @@ import { ParentPortal } from './components/ParentPortal';
 import { RewardsModal } from './components/RewardsModal';
 import { CelebrationOverlay } from './components/CelebrationOverlay';
 import { LevelOverlay } from './components/LevelOverlay';
-import { getLevelConfig } from './data/levels';
+import { getLevelConfig, requiredPowerFor } from './data/levels';
+import { computeLook, computePower, computeRobotStats } from './data/upgrades';
+import { ChallengeResult } from './components/ChallengeRunner';
 import { RoboNeigeScene } from './game/threeScene';
 import {
   loadPlayerState,
@@ -33,6 +35,22 @@ export default function App() {
   const [stickers, setStickers] = useState<StickerReward[]>(loadStickers);
   const [celebrationReward, setCelebrationReward] = useState<StickerReward | null>(null);
   const [terrainTheme, setTerrainTheme] = useState<TerrainTheme>('snow-forest');
+
+  // Robot : statistiques, puissance et apparence calculées à partir des améliorations
+  const stats = useMemo(() => computeRobotStats(upgrades), [upgrades]);
+  const power = useMemo(() => computePower(upgrades), [upgrades]);
+  const look = useMemo(() => computeLook(upgrades), [upgrades]);
+
+  // Prochain niveau qui exige une puissance minimale
+  const nextGate = useMemo(() => {
+    for (let lvl = playerState.gameLevel + 1; lvl <= playerState.gameLevel + 3; lvl++) {
+      const required = requiredPowerFor(lvl);
+      if (required > 0) return { level: lvl, required };
+    }
+    return null;
+  }, [playerState.gameLevel]);
+  const nextLevelRequired = requiredPowerFor(playerState.gameLevel + 1);
+  const nextLevelLocked = power < nextLevelRequired;
 
   // Modal visibility states
   const [isWorkshopOpen, setIsWorkshopOpen] = useState(false);
@@ -152,7 +170,7 @@ export default function App() {
   // Handler: collect snow from ground
   const handleCollectSnow = (amount: number) => {
     setPlayerState((prev) => {
-      const nextSnow = Math.min(prev.maxSnow, prev.snowAmmo + amount);
+      const nextSnow = Math.min(stats.maxSnow, prev.snowAmmo + amount);
       return {
         ...prev,
         snowAmmo: nextSnow,
@@ -202,9 +220,9 @@ export default function App() {
   const handleCollectHeart = () => {
     setPlayerState((prev) => ({
       ...prev,
-      health: Math.min(prev.maxHealth, prev.health + Math.round(prev.maxHealth * 0.1)),
+      health: Math.min(stats.maxHealth, prev.health + Math.round((stats.maxHealth * stats.heartHeal) / 100)),
     }));
-    setMissionHint('Miam, un cœur ! +10% d\'énergie ❤️');
+    setMissionHint(`Miam, un cœur ! +${stats.heartHeal}% d'énergie ❤️`);
   };
 
   // Handler: level complete
@@ -225,7 +243,7 @@ export default function App() {
     setPlayerState((prev) => ({
       ...prev,
       gameLevel: levelNumber,
-      health: prev.maxHealth,
+      health: stats.maxHealth,
       snowAmmo: Math.max(prev.snowAmmo, 5),
     }));
     setMissionHint(cfg.hint);
@@ -233,7 +251,10 @@ export default function App() {
     setGameStatus('playing');
   };
 
-  const handleNextLevel = () => startLevel(playerState.gameLevel + 1);
+  const handleNextLevel = () => {
+    if (nextLevelLocked) return;
+    startLevel(playerState.gameLevel + 1);
+  };
   const handleRetryLevel = () => startLevel(playerState.gameLevel);
 
   // Handler: fire snowball
@@ -275,89 +296,71 @@ export default function App() {
     }
   };
 
-  // Handler: unlock upgrade via educational challenge
-  const handleUnlockUpgrade = (upgradeId: string, word: string, mode: 'read' | 'write') => {
+  // Handler: chaque réponse à un défi (pour le taux de réussite parent)
+  const handleAnswer = (correct: boolean) => {
+    setParentStats((prev) => {
+      const answersTotal = prev.answersTotal + 1;
+      const answersCorrect = prev.answersCorrect + (correct ? 1 : 0);
+      return {
+        ...prev,
+        answersTotal,
+        answersCorrect,
+        accuracyRate: Math.round((answersCorrect / answersTotal) * 100),
+      };
+    });
+  };
+
+  // Handler: unlock upgrade via educational challenges
+  const handleUnlockUpgrade = (upgradeId: string, results: ChallengeResult[]) => {
+    const upgrade = upgrades.find((u) => u.id === upgradeId);
+    const isLook = upgrade?.paint !== undefined || upgrade?.crown;
     setUpgrades((prev) =>
       prev.map((u) => {
-        if (u.id === upgradeId) {
-          return { ...u, unlocked: true, equipped: true };
-        }
+        if (u.id === upgradeId) return { ...u, unlocked: true, equipped: true };
+        // Une seule peinture portée à la fois
+        if (upgrade?.paint !== undefined && u.paint !== undefined) return { ...u, equipped: false };
         return u;
       })
     );
 
-    // Apply upgrade benefits to player
-    setPlayerState((prev) => {
-      let maxSnow = prev.maxSnow;
-      let speedMultiplier = prev.speedMultiplier;
-      let cannonTier = prev.cannonTier;
-      let hasShield = prev.hasShield;
-      let isGolden = prev.colorTheme === 'gold';
+    // L'énergie gagnée par l'amélioration est ajoutée tout de suite
+    if (upgrade?.stats.maxHealth) {
+      const bonus = upgrade.stats.maxHealth;
+      setPlayerState((prev) => ({ ...prev, health: prev.health + bonus }));
+    }
+    setPlayerState((prev) => ({ ...prev, score: prev.score + 100 * results.length }));
 
-      if (upgradeId === 'upgrade-tank') maxSnow = 20;
-      if (upgradeId === 'upgrade-speed') speedMultiplier = 1.35;
-      if (upgradeId === 'upgrade-cannon') cannonTier = 2;
-      if (upgradeId === 'upgrade-shield') hasShield = true;
-      if (upgradeId === 'upgrade-gold') isGolden = true;
-
-      return {
-        ...prev,
-        maxSnow,
-        speedMultiplier,
-        cannonTier,
-        hasShield,
-        colorTheme: isGolden ? 'gold' : prev.colorTheme,
-        score: prev.score + 100,
-      };
-    });
-
-    // Update parent stats
+    const reads = results.filter((r) => r.mode === 'read');
+    const writes = results.filter((r) => r.mode === 'write');
     setParentStats((prev) => {
-      const isRead = mode === 'read';
-      const wordsReadCount = isRead ? prev.wordsReadCount + 1 : prev.wordsReadCount;
-      const wordsWrittenCount = !isRead ? prev.wordsWrittenCount + 1 : prev.wordsWrittenCount;
-      const challengesCompleted = prev.challengesCompleted + 1;
-      const masteredWords = prev.masteredWords.includes(word)
-        ? prev.masteredWords
-        : [...prev.masteredWords, word];
-
+      const masteredWords = [...prev.masteredWords];
+      results.forEach((r) => {
+        if (!masteredWords.includes(r.word)) masteredWords.push(r.word);
+      });
       return {
         ...prev,
-        wordsReadCount,
-        wordsWrittenCount,
-        challengesCompleted,
+        wordsReadCount: prev.wordsReadCount + reads.length,
+        wordsWrittenCount: prev.wordsWrittenCount + writes.length,
+        challengesCompleted: prev.challengesCompleted + results.length,
         masteredWords,
       };
     });
 
-    checkTrophies(mode === 'read' ? 'read' : 'write');
+    if (reads.length) checkTrophies('read');
+    if (writes.length) checkTrophies('write');
     checkTrophies('upgrade');
 
     // Award educational badges / stickers
-    if (mode === 'read') {
-      if (parentStats.wordsReadCount === 0) {
-        triggerRewardUnlock('stk-reading-1');
-      } else {
-        triggerRewardUnlock('stk-reading-2');
-      }
-      if (word.includes(' ') || word.length > 5) {
-        triggerRewardUnlock('stk-reading-3');
-      }
-    } else {
-      if (parentStats.wordsWrittenCount === 0) {
-        triggerRewardUnlock('stk-writing-1');
-      } else {
-        triggerRewardUnlock('stk-writing-2');
-      }
+    if (reads.length) {
+      triggerRewardUnlock(parentStats.wordsReadCount === 0 ? 'stk-reading-1' : 'stk-reading-2');
+      if (reads.some((r) => r.word.includes(' '))) triggerRewardUnlock('stk-reading-3');
     }
-
-    if (upgradeId === 'upgrade-gold') {
-      triggerRewardUnlock('stk-robot-2');
-    } else {
-      triggerRewardUnlock('stk-robot-1');
+    if (writes.length) {
+      triggerRewardUnlock(parentStats.wordsWrittenCount === 0 ? 'stk-writing-1' : 'stk-writing-2');
     }
+    triggerRewardUnlock(isLook ? 'stk-robot-2' : 'stk-robot-1');
 
-    setMissionHint(`Génial ! Tu as amélioré ton robot avec ${word} ! 🌟`);
+    setMissionHint(`Génial ! ${upgrade?.name ?? 'Ton amélioration'} est installée ! 🌟`);
   };
 
   // Handler: toggle sticking a reward on the album sheet
@@ -369,36 +372,18 @@ export default function App() {
     );
   };
 
-  // Handler: toggle equipping an unlocked upgrade
+  // Handler: porter / retirer une peinture ou la couronne
   const handleEquipUpgrade = (upgradeId: string) => {
-    setUpgrades((prev) =>
-      prev.map((u) => {
-        if (u.id === upgradeId) {
-          const nextEquipped = !u.equipped;
-          // Apply or revert stat
-          setPlayerState((pState) => {
-            if (upgradeId === 'upgrade-tank') {
-              return { ...pState, maxSnow: nextEquipped ? 20 : 10 };
-            }
-            if (upgradeId === 'upgrade-speed') {
-              return { ...pState, speedMultiplier: nextEquipped ? 1.35 : 1.0 };
-            }
-            if (upgradeId === 'upgrade-cannon') {
-              return { ...pState, cannonTier: nextEquipped ? 2 : 1 };
-            }
-            if (upgradeId === 'upgrade-shield') {
-              return { ...pState, hasShield: nextEquipped };
-            }
-            if (upgradeId === 'upgrade-gold') {
-              return { ...pState, colorTheme: nextEquipped ? 'gold' : 'cyan' };
-            }
-            return pState;
-          });
-          return { ...u, equipped: nextEquipped };
-        }
+    setUpgrades((prev) => {
+      const target = prev.find((u) => u.id === upgradeId);
+      if (!target) return prev;
+      const nextEquipped = !target.equipped;
+      return prev.map((u) => {
+        if (u.id === upgradeId) return { ...u, equipped: nextEquipped };
+        if (nextEquipped && target.paint !== undefined && u.paint !== undefined) return { ...u, equipped: false };
         return u;
-      })
-    );
+      });
+    });
   };
 
   // Handler: update difficulty level from parent portal
@@ -421,7 +406,6 @@ export default function App() {
     startLevel(1);
   };
 
-  const isGolden = playerState.colorTheme === 'gold';
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-sky-950 font-sans select-none">
@@ -440,11 +424,9 @@ export default function App() {
         onScoop={handleManualScoop}
         initialLevel={initialLevel}
         ammo={playerState.snowAmmo}
-        maxAmmo={playerState.maxSnow}
-        speedMultiplier={playerState.speedMultiplier}
-        cannonTier={playerState.cannonTier}
-        hasShield={playerState.hasShield}
-        isGolden={isGolden}
+        stats={stats}
+        paint={look.paint}
+        crown={look.crown}
         terrainTheme={terrainTheme}
         sceneRef={sceneRef}
       />
@@ -452,9 +434,10 @@ export default function App() {
       {/* Head-Up Display (HUD) */}
       <HUD
         snowAmmo={playerState.snowAmmo}
-        maxSnow={playerState.maxSnow}
+        maxSnow={stats.maxSnow}
         health={playerState.health}
-        maxHealth={playerState.maxHealth}
+        maxHealth={stats.maxHealth}
+        power={power}
         score={playerState.score}
         stars={playerState.stars}
         terrainTheme={terrainTheme}
@@ -472,7 +455,7 @@ export default function App() {
         onFire={handleFireSnowball}
         onScoop={handleManualScoop}
         ammo={playerState.snowAmmo}
-        maxAmmo={playerState.maxSnow}
+        maxAmmo={stats.maxSnow}
       />
 
       {/* Workshop & Learning Challenge Modal */}
@@ -480,9 +463,14 @@ export default function App() {
         isOpen={isWorkshopOpen}
         onClose={() => setIsWorkshopOpen(false)}
         upgrades={upgrades}
+        power={power}
+        gameLevel={playerState.gameLevel}
+        nextGate={nextGate}
+        difficulty={parentStats.currentLevel}
+        masteredWords={parentStats.masteredWords}
         onUnlockUpgrade={handleUnlockUpgrade}
         onEquipUpgrade={handleEquipUpgrade}
-        snowCollected={parentStats.snowCollected}
+        onAnswer={handleAnswer}
       />
 
       {/* Rewards & Sticker Album Modal */}
@@ -511,6 +499,9 @@ export default function App() {
         nextTitle={getLevelConfig(playerState.gameLevel + 1).title}
         onNext={handleNextLevel}
         onRetry={handleRetryLevel}
+        power={power}
+        requiredPower={nextLevelRequired}
+        onOpenWorkshop={() => setIsWorkshopOpen(true)}
       />
 
       {/* Celebratory Reward Ceremony Overlay */}

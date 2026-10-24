@@ -8,6 +8,7 @@ interface HUDProps {
   maxSnow: number;
   health: number;
   maxHealth: number;
+  power: number;
   score: number;
   stars: number;
   terrainTheme: TerrainTheme;
@@ -24,6 +25,7 @@ export const HUD: React.FC<HUDProps> = ({
   maxSnow,
   health,
   maxHealth,
+  power,
   score,
   terrainTheme,
   onChangeTerrainTheme,
@@ -111,6 +113,9 @@ export const HUD: React.FC<HUDProps> = ({
             <Sparkles className="w-5 h-5 text-yellow-300 fill-yellow-300" />
             <span>{score} pts</span>
           </div>
+          <div className="flex items-center gap-1 text-yellow-200 font-black text-sm" title="Puissance du robot">
+            ⚡ {power}
+          </div>
         </div>
 
         {/* Right: Quick Action Buttons */}
@@ -160,6 +165,7 @@ export const HUD: React.FC<HUDProps> = ({
       {levelProgress && (
         <div className="pointer-events-none self-center flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-indigo-950/85 backdrop-blur-md px-4 py-1.5 rounded-2xl border-2 border-amber-300/70 shadow-md text-xs font-black text-white">
           <span className="text-amber-300">Niveau {levelProgress.level}</span>
+          <span className="text-yellow-200 sm:hidden">⚡ {power}</span>
           <span>⛄ {levelProgress.killed}/{levelProgress.total}</span>
           {levelProgress.mode === 'defend' && (
             <>

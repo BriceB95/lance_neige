@@ -1,5 +1,6 @@
 import { ParentStats, PlayerState, Trophy, UpgradeItem, StickerReward } from '../types';
-import { INITIAL_UPGRADES, TROPHIES_LIST, STICKERS_LIST } from '../data/curriculum';
+import { TROPHIES_LIST, STICKERS_LIST } from '../data/curriculum';
+import { INITIAL_UPGRADES } from '../data/upgrades';
 
 const STORAGE_KEYS = {
   PLAYER: 'roboneige_player_state_v1',
@@ -11,17 +12,9 @@ const STORAGE_KEYS = {
 
 const DEFAULT_PLAYER_STATE: PlayerState = {
   snowAmmo: 5,
-  maxSnow: 10,
   stars: 0,
   score: 0,
   health: 100,
-  maxHealth: 100,
-  speedMultiplier: 1.0,
-  cannonTier: 1,
-  hasShield: false,
-  colorTheme: 'cyan',
-  unlockedUpgrades: [],
-  equippedUpgrades: {},
   gameLevel: 1
 };
 
@@ -30,6 +23,8 @@ const DEFAULT_PARENT_STATS: ParentStats = {
   wordsWrittenCount: 0,
   totalPlayTimeMinutes: 1,
   accuracyRate: 100,
+  answersTotal: 0,
+  answersCorrect: 0,
   challengesCompleted: 0,
   snowballsThrown: 0,
   snowCollected: 5,
@@ -43,8 +38,8 @@ export function loadPlayerState(): PlayerState {
     const raw = localStorage.getItem(STORAGE_KEYS.PLAYER);
     if (raw) {
       const state: PlayerState = { ...DEFAULT_PLAYER_STATE, ...JSON.parse(raw) };
-      // Un robot sans énergie repart toujours avec la vie pleine
-      if (state.health <= 0) state.health = state.maxHealth;
+      // Un robot sans énergie repart avec un peu de vie (la vie max est recalculée par l'App)
+      if (state.health <= 0) state.health = 100;
       return state;
     }
   } catch (e) {

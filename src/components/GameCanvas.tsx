@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { RoboNeigeScene, SceneCallbacks } from '../game/threeScene';
-import { LevelConfig, TerrainTheme } from '../types';
+import { LevelConfig, RobotStats, TerrainTheme } from '../types';
 
 interface GameCanvasProps {
   callbacks: SceneCallbacks;
@@ -8,11 +8,9 @@ interface GameCanvasProps {
   onScoop: () => void;
   initialLevel: LevelConfig;
   ammo: number;
-  maxAmmo: number;
-  speedMultiplier: number;
-  cannonTier: number;
-  hasShield: boolean;
-  isGolden: boolean;
+  stats: RobotStats;
+  paint: number;
+  crown: boolean;
   terrainTheme: TerrainTheme;
   sceneRef: React.MutableRefObject<RoboNeigeScene | null>;
 }
@@ -23,11 +21,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   onScoop,
   initialLevel,
   ammo,
-  maxAmmo,
-  speedMultiplier,
-  cannonTier,
-  hasShield,
-  isGolden,
+  stats,
+  paint,
+  crown,
   terrainTheme,
   sceneRef,
 }) => {
@@ -120,17 +116,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   // Sync upgrades, visual changes and terrain theme to 3D scene
   useEffect(() => {
     if (sceneRef.current) {
-      sceneRef.current.updateUpgrades({
-        currentSnow: ammo,
-        maxSnow: maxAmmo,
-        speedMultiplier,
-        cannonTier,
-        hasShield,
-        isGolden,
-      });
+      sceneRef.current.updateRobot({ stats, currentSnow: ammo, paint, crown });
       sceneRef.current.setTerrainTheme(terrainTheme);
     }
-  }, [ammo, maxAmmo, speedMultiplier, cannonTier, hasShield, isGolden, terrainTheme, sceneRef]);
+  }, [ammo, stats, paint, crown, terrainTheme, sceneRef]);
 
   return (
     <div
