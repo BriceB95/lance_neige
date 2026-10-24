@@ -1,0 +1,6 @@
+{
+  "name": "RoboNeige 3D - Aventure Lecture & Écriture",
+  "description": "Jeu 3D Three.js ludo-éducatif pour enfants de 7 ans (CP/CE1). Pilote ton robot, ramasse la neige, lance des boules de neige et débloque des améliorations en lisant et écrivant !",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
