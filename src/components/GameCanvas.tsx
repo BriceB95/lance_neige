@@ -6,6 +6,8 @@ interface GameCanvasProps {
   onCollectSnow: (amount: number) => void;
   onHitEnemy: (scoreGain: number, isDouble?: boolean) => void;
   onRobotDamaged?: (amount: number) => void;
+  onFire: () => void;
+  onScoop: () => void;
   ammo: number;
   maxAmmo: number;
   speedMultiplier: number;
@@ -20,6 +22,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   onCollectSnow,
   onHitEnemy,
   onRobotDamaged,
+  onFire,
+  onScoop,
   ammo,
   maxAmmo,
   speedMultiplier,
@@ -52,16 +56,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       keysDown[e.key.toLowerCase()] = true;
 
-      // Spacebar to shoot
+      // Spacebar to shoot (calls parent onFire which correctly checks and decrements ammo)
       if (e.code === 'Space') {
         e.preventDefault();
-        if (ammo > 0) {
-          scene.fireSnowball();
-        }
+        onFire();
       }
       // R to scoop snow
       if (e.key.toLowerCase() === 'r') {
-        scene.scoopSnowManually();
+        onScoop();
       }
     };
 

@@ -166,7 +166,14 @@ export default function App() {
   // Handler: robot takes damage from enemy snowball
   const handleRobotDamaged = (amount: number) => {
     setPlayerState((prev) => {
-      const nextHealth = Math.max(10, prev.health - amount);
+      const nextHealth = Math.max(0, prev.health - amount);
+      if (nextHealth === 0) {
+        speakFrench("Oups ! Robot tout gelé ! Réchauffement magique en cours...");
+        setTimeout(() => {
+          setPlayerState((p) => ({ ...p, health: 100 }));
+          setMissionHint('Robot réparé et réchauffé ! Reprends l\'aventure ! ☀️');
+        }, 2000);
+      }
       return { ...prev, health: nextHealth };
     });
   };
@@ -363,6 +370,10 @@ export default function App() {
         onCollectSnow={handleCollectSnow}
         onHitEnemy={handleHitEnemy}
         onRobotDamaged={handleRobotDamaged}
+        onFire={handleFireSnowball}
+        onScoop={() => {
+          if (sceneRef.current) sceneRef.current.scoopSnowManually();
+        }}
         ammo={playerState.snowAmmo}
         maxAmmo={playerState.maxSnow}
         speedMultiplier={playerState.speedMultiplier}
