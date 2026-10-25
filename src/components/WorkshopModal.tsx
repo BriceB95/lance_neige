@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { X, Wrench, Lock, CheckCircle, Zap } from 'lucide-react';
-import { CurriculumItem, DifficultyLevel, UpgradeCategory, UpgradeItem } from '../types';
+import { CurriculumItem, DifficultyLevel, ReviewEntry, UpgradeCategory, UpgradeItem } from '../types';
 import { CATEGORIES, describeBonus, tierMinLevel } from '../data/upgrades';
 import { pickChallenges } from '../data/curriculum';
-import { ChallengeRunner, ChallengeResult } from './ChallengeRunner';
+import { ChallengeMode, ChallengeRunner, ChallengeResult } from './ChallengeRunner';
 
 interface WorkshopModalProps {
   isOpen: boolean;
@@ -14,9 +14,12 @@ interface WorkshopModalProps {
   nextGate: { level: number; required: number } | null;
   difficulty: DifficultyLevel;
   masteredWords: string[];
+  customItems: CurriculumItem[];
+  review: Record<string, ReviewEntry>;
+  voiceEnabled: boolean;
   onUnlockUpgrade: (upgradeId: string, results: ChallengeResult[]) => void;
   onEquipUpgrade: (upgradeId: string) => void;
-  onAnswer: (correct: boolean) => void;
+  onAnswer: (correct: boolean, item: CurriculumItem, mode: ChallengeMode) => void;
 }
 
 export const WorkshopModal: React.FC<WorkshopModalProps> = ({
@@ -28,6 +31,9 @@ export const WorkshopModal: React.FC<WorkshopModalProps> = ({
   nextGate,
   difficulty,
   masteredWords,
+  customItems,
+  review,
+  voiceEnabled,
   onUnlockUpgrade,
   onEquipUpgrade,
   onAnswer,
@@ -38,7 +44,11 @@ export const WorkshopModal: React.FC<WorkshopModalProps> = ({
   if (!isOpen) return null;
 
   const startChallenge = (upgrade: UpgradeItem) => {
-    setChallenge({ upgrade, items: pickChallenges(difficulty, upgrade.challenges, masteredWords), key: Date.now() });
+    setChallenge({
+      upgrade,
+      items: pickChallenges(difficulty, upgrade.challenges, masteredWords, { custom: customItems, review }),
+      key: Date.now(),
+    });
   };
 
   const unlockedCount = upgrades.filter((u) => u.unlocked).length;
@@ -89,8 +99,12 @@ export const WorkshopModal: React.FC<WorkshopModalProps> = ({
         {challenge ? (
           <ChallengeRunner
             key={challenge.key}
-            upgrade={challenge.upgrade}
+            title={challenge.upgrade.name}
+            icon={challenge.upgrade.icon}
             items={challenge.items}
+            pool={customItems}
+            voiceEnabled={voiceEnabled}
+            successMessage={`Bravo ! ${challenge.upgrade.name} est débloqué !`}
             onAnswer={onAnswer}
             onCancel={() => setChallenge(null)}
             onComplete={(results) => {

@@ -12,6 +12,8 @@ export interface SceneCallbacks {
   onLevelProgress?: (progress: LevelProgress) => void;
   onLevelComplete?: () => void;
   onLevelFailed?: (reason: 'castle') => void;
+  onChestFound?: () => void;
+  onBossShield?: (shielded: boolean) => void;
 }
 
 const CASTLE_RADIUS = 2.6;
@@ -71,6 +73,18 @@ export interface SnowmanEnemy {
   stateTimer: number;
   throwCooldown: number;
   attackCooldown: number;
+  isBoss?: boolean;
+  shielded?: boolean;
+  shieldMesh?: THREE.Mesh;
+  shieldTimer?: number;
+}
+
+export interface ChestPickup {
+  group: THREE.Group;
+  x: number;
+  z: number;
+  life: number;
+  scale: number;
 }
 
 export interface HeartPickup {
@@ -145,7 +159,11 @@ export class RoboNeigeScene {
   private particles: SplatParticle[] = [];
   private snowParticlesInstanced: THREE.InstancedMesh | null = null;
   private snowParticleMatrices: THREE.Matrix4[] = [];
+  private pileMat: THREE.MeshStandardMaterial | null = null;
   private hearts: HeartPickup[] = [];
+  private chests: ChestPickup[] = [];
+  private chestTimer = 25;
+  private boostTimer = 0;
   private debris: Debris[] = [];
   private castle: THREE.Group | null = null;
   private snowmanAssets: Record<string, any> | null = null;
@@ -325,7 +343,14 @@ export class RoboNeigeScene {
     this.applyTerrainTheme(theme);
   }
 
+  private pileColorFor(theme: TerrainTheme): number {
+    // Bleu glacier sur la neige blanche, blanc sur la glace bleue et la vallée sombre
+    return theme === 'snow-forest' ? 0x38bdf8 : 0xffffff;
+  }
+
   private applyTerrainTheme(theme: TerrainTheme) {
+    this.pileMat?.color.setHex(this.pileColorFor(theme));
+
     // 1. Clear existing terrain props
     while (this.terrainPropsGroup.children.length > 0) {
       const child = this.terrainPropsGroup.children[0];
@@ -793,13 +818,27 @@ export class RoboNeigeScene {
 
   private createSnowPiles(count: number) {
     const pileGeo = new THREE.SphereGeometry(0.9, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.5);
+    // Couleur adaptée au paysage pour bien ressortir du sol
     const pileMat = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      roughness: 0.5,
+      color: this.pileColorFor(this.currentTerrainTheme),
+      emissive: 0x1d4ed8,
+      emissiveIntensity: 0.25,
+      roughness: 0.4,
       metalness: 0.1,
     });
+    this.pileMat = pileMat;
 
-    const sparkleGeo = new THREE.OctahedronGeometry(0.18);
+    // Anneau orange au sol qui pulse : repérable sur tous les paysages
+    const ringGeo = new THREE.RingGeometry(1.25, 1.55, 28);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xf59e0b,
+      transparent: true,
+      opacity: 0.8,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+
+    const sparkleGeo = new THREE.OctahedronGeometry(0.28);
     const sparkleMat = new THREE.MeshStandardMaterial({
       color: 0x38bdf8,
       emissive: 0x7dd3fc,
@@ -818,6 +857,11 @@ export class RoboNeigeScene {
       const sparkle = new THREE.Mesh(sparkleGeo, sparkleMat);
       sparkle.position.y = 0.75;
       group.add(sparkle);
+
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.18;
+      group.add(ring);
 
       // Random position avoiding initial center
       const angle = Math.random() * Math.PI * 2;
@@ -1080,7 +1124,138 @@ export class RoboNeigeScene {
     this.hearts.splice(index, 1);
   }
 
+  private spawnChest() {
+    const group = new THREE.Group();
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.7 });
+    const goldMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0xca8a04, emissiveIntensity: 0.5, metalness: 0.6, roughness: 0.3 });
+    const box = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.8, 0.9), woodMat);
+    box.position.y = 0.4;
+    box.castShadow = !this.isSoftwareGl;
+    group.add(box);
+    const lid = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 1.3, 12, 1, false, 0, Math.PI), woodMat);
+    lid.rotation.z = Math.PI / 2;
+    lid.position.y = 0.8;
+    group.add(lid);
+    const band = new THREE.Mesh(new THREE.BoxGeometry(0.22, 1.35, 0.95), goldMat);
+    band.position.y = 0.62;
+    group.add(band);
+    const lock = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.25, 0.1), goldMat);
+    lock.position.set(0, 0.55, 0.47);
+    group.add(lock);
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(1.2, 1.5, 28),
+      new THREE.MeshBasicMaterial({ color: 0xa855f7, transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.18;
+    group.add(ring);
+
+    let x = 0;
+    let z = 0;
+    for (let tries = 0; tries < 10; tries++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 5 + Math.random() * 13;
+      x = Math.cos(angle) * dist;
+      z = Math.sin(angle) * dist;
+      if (!this.castle || Math.sqrt(x * x + z * z) > CASTLE_RADIUS + 2) break;
+    }
+    group.position.set(x, 0, z);
+    group.scale.setScalar(0.1);
+    this.scene.add(group);
+    this.chests.push({ group, x, z, life: 30, scale: 0.1 });
+    playRobotBoop();
+  }
+
+  private removeChest(index: number) {
+    const c = this.chests[index];
+    this.scene.remove(c.group);
+    c.group.traverse((o) => {
+      if (o instanceof THREE.Mesh) {
+        o.geometry.dispose();
+        (o.material as THREE.Material).dispose();
+      }
+    });
+    this.chests.splice(index, 1);
+  }
+
+  private updateChests(delta: number, time: number) {
+    this.chestTimer -= delta;
+    if (this.chestTimer <= 0) {
+      this.chestTimer = 40 + Math.random() * 20;
+      if (this.chests.length === 0) this.spawnChest();
+    }
+    for (let i = this.chests.length - 1; i >= 0; i--) {
+      const c = this.chests[i];
+      c.life -= delta;
+      if (c.scale < 1) {
+        c.scale = Math.min(1, c.scale + delta * 2.5);
+        c.group.scale.setScalar(c.scale);
+      }
+      c.group.rotation.y = Math.sin(time * 1.5) * 0.4;
+      c.group.position.y = Math.abs(Math.sin(time * 3)) * 0.25;
+      c.group.visible = c.life > 4 || Math.floor(time * 8) % 2 === 0;
+      const dx = c.x - this.robotX;
+      const dz = c.z - this.robotZ;
+      if (dx * dx + dz * dz < 2.0 * 2.0) {
+        this.spawnSnowSplats(c.x, 1, c.z, 24, 0xfacc15);
+        playSuccessChime();
+        this.removeChest(i);
+        this.callbacks.onChestFound?.();
+      } else if (c.life <= 0) {
+        this.removeChest(i);
+      }
+    }
+  }
+
+  /** Super-tir : dégâts doublés pendant quelques secondes */
+  public activateBoost(seconds: number) {
+    this.boostTimer = seconds;
+  }
+
+  private createBoss(cfg: LevelConfig): SnowmanEnemy {
+    const boss = this.createSnowman(cfg, 0, -12);
+    boss.isBoss = true;
+    const shield = new THREE.Mesh(
+      new THREE.SphereGeometry(2.4, 24, 16),
+      new THREE.MeshStandardMaterial({
+        color: 0x2563eb,
+        emissive: 0x1d4ed8,
+        emissiveIntensity: 0.9,
+        transparent: true,
+        opacity: 0.5,
+        depthWrite: false,
+      })
+    );
+    shield.position.y = 2.1;
+    shield.userData.noDebris = true;
+    boss.group.add(shield);
+    boss.shieldMesh = shield;
+    boss.shielded = true;
+    boss.shieldTimer = 0;
+    // Couronne dorée pour le reconnaître
+    const crown = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.5, 0.42, 0.35, 8, 1, true),
+      new THREE.MeshStandardMaterial({ color: 0xfacc15, metalness: 0.8, roughness: 0.2, side: THREE.DoubleSide })
+    );
+    crown.position.y = 3.95;
+    boss.group.add(crown);
+    return boss;
+  }
+
+  /** La lecture réussie brise le bouclier du boss pendant quelques secondes */
+  public breakBossShield(seconds: number) {
+    const boss = this.enemies.find((e) => e.isBoss);
+    if (!boss || !boss.shielded) return;
+    boss.shielded = false;
+    boss.shieldTimer = seconds;
+    if (boss.shieldMesh) boss.shieldMesh.visible = false;
+    this.spawnSnowSplats(boss.x, 2.5 * boss.scale, boss.z, 40, 0x60a5fa);
+    playSplat();
+    this.callbacks.onBossShield?.(false);
+  }
+
   private clearLevelObjects() {
+    for (let i = this.chests.length - 1; i >= 0; i--) this.removeChest(i);
     for (const enemy of this.enemies) {
       this.scene.remove(enemy.group);
       (enemy.hpFill.material as THREE.Material).dispose();
@@ -1127,7 +1302,15 @@ export class RoboNeigeScene {
     this.robotGroup.visible = true;
     this.lastProgressKey = '';
 
-    if (cfg.mode === 'defend') {
+    this.chestTimer = 25;
+    this.boostTimer = 0;
+    if (cfg.mode === 'boss') {
+      this.robotX = 0;
+      this.robotZ = 6;
+      this.enemies.push(this.createBoss(cfg));
+      this.levelState.spawned = 1;
+      this.callbacks.onBossShield?.(true);
+    } else if (cfg.mode === 'defend') {
       this.castle = this.createCastle();
       this.scene.add(this.castle);
       this.robotX = 0;
@@ -1325,11 +1508,12 @@ export class RoboNeigeScene {
     const radius = 0.3 * this.stats.ballSize;
     const createSingleBall = (offY: number, spreadAngle: number) => {
       const ballGeo = new THREE.SphereGeometry(radius, 10, 10);
+      const boosted = this.boostTimer > 0;
       const ballMat = new THREE.MeshStandardMaterial({
-        color: 0xffffff,
+        color: boosted ? 0xfde047 : 0xffffff,
         roughness: 0.2,
-        emissive: 0x93c5fd,
-        emissiveIntensity: 0.5,
+        emissive: boosted ? 0xf59e0b : 0x93c5fd,
+        emissiveIntensity: boosted ? 0.9 : 0.5,
       });
       const mesh = new THREE.Mesh(ballGeo, ballMat);
       mesh.position.set(startX, startY + offY, startZ);
@@ -1344,7 +1528,7 @@ export class RoboNeigeScene {
         life: 2.2,
         isPlayer: true,
         radius,
-        damage: this.stats.damage,
+        damage: this.stats.damage * (this.boostTimer > 0 ? 2 : 1),
       });
     };
 
@@ -1500,6 +1684,8 @@ export class RoboNeigeScene {
     this.updateLevel(delta);
     this.updateEnemies(delta);
     this.updateHearts(delta, time);
+    this.updateChests(delta, time);
+    if (this.boostTimer > 0) this.boostTimer -= delta;
     this.updateDebris(delta);
 
     // 4. Update Projectiles
@@ -1529,6 +1715,12 @@ export class RoboNeigeScene {
           if (hit.dist > radius || hit.y < -0.2 || hit.y > 4.1 * enemy.scale) continue;
 
           remove = true;
+          if (enemy.shielded) {
+            // Le bouclier renvoie la boule : il faut lire pour le briser
+            playSplat();
+            this.spawnSnowSplats(hit.x, hit.y, hit.z, 14, 0x60a5fa);
+            break;
+          }
           enemy.health -= p.damage;
           this.updateHpBar(enemy);
 
@@ -1589,6 +1781,9 @@ export class RoboNeigeScene {
           sparkle.rotation.y = time * 2;
           sparkle.position.y = 0.75 + Math.sin(time * 3 + pile.x) * 0.12;
         }
+        // Anneau qui respire
+        const ring = pile.group.children[2];
+        if (ring) ring.scale.setScalar(1 + Math.sin(time * 4 + pile.z) * 0.08);
       }
     }
 
@@ -1672,6 +1867,19 @@ export class RoboNeigeScene {
         continue;
       }
 
+      if (enemy.isBoss && enemy.shieldMesh) {
+        if (enemy.shielded) {
+          enemy.shieldMesh.scale.setScalar(1 + Math.sin(enemy.wobblePhase * 2) * 0.05);
+        } else {
+          enemy.shieldTimer = (enemy.shieldTimer ?? 0) - delta;
+          if (enemy.shieldTimer <= 0) {
+            enemy.shielded = true;
+            enemy.shieldMesh.visible = true;
+            this.callbacks.onBossShield?.(true);
+          }
+        }
+      }
+
       enemy.group.rotation.z = Math.sin(enemy.wobblePhase) * 0.12;
       enemy.group.rotation.x = Math.cos(enemy.wobblePhase * 0.8) * 0.08;
       enemy.head.rotation.y = Math.sin(enemy.wobblePhase * 1.5) * 0.25;
@@ -1697,7 +1905,7 @@ export class RoboNeigeScene {
             this.spawnSnowSplats(enemy.x * 0.85, 2.0, enemy.z * 0.85, 12, 0xbae6fd);
           }
         }
-      } else if (distP < 9) {
+      } else if (distP < (enemy.isBoss ? 16 : 9)) {
         // Poursuit le robot quand il est proche
         enemy.x += (dxP / distP) * enemy.speed * delta;
         enemy.z += (dzP / distP) * enemy.speed * delta;

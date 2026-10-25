@@ -1,19 +1,27 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import confetti from 'canvas-confetti';
-import { Volume2, CheckCircle, RotateCcw } from 'lucide-react';
-import { CurriculumItem, UpgradeItem } from '../types';
-import { pickDistractors } from '../data/curriculum';
+import { Volume2, CheckCircle, RotateCcw, Mic } from 'lucide-react';
+import { CurriculumItem } from '../types';
+import { pickDistractors, pickWordDistractors } from '../data/curriculum';
 import { speakFrench, playSuccessChime, playUpgradeUnlock } from '../audio/soundEffects';
+import { listenOnce, speechRecognitionSupported, spokenMatches } from '../audio/speechRecognition';
+
+export type ChallengeMode = 'read' | 'write' | 'speak';
 
 export interface ChallengeResult {
   word: string;
-  mode: 'read' | 'write';
+  mode: ChallengeMode;
 }
 
 interface ChallengeRunnerProps {
-  upgrade: UpgradeItem;
+  title: string;
+  icon: string;
   items: CurriculumItem[];
-  onAnswer: (correct: boolean) => void;
+  pool: CurriculumItem[]; // mots de l'école (pièges écrits)
+  voiceEnabled: boolean;
+  allowedModes?: ChallengeMode[];
+  successMessage?: string;
+  onAnswer: (correct: boolean, item: CurriculumItem, mode: ChallengeMode) => void;
   onComplete: (results: ChallengeResult[]) => void;
   onCancel: () => void;
 }
@@ -24,11 +32,26 @@ const shuffle = <T,>(arr: T[]): T[] => [...arr].sort(() => Math.random() - 0.5);
 const tokensOf = (item: CurriculumItem): string[] =>
   item.type === 'sentence' ? item.content.split(' ') : Array.from(item.content);
 
-export const ChallengeRunner: React.FC<ChallengeRunnerProps> = ({ upgrade, items, onAnswer, onComplete, onCancel }) => {
-  // Alterne lecture et écriture d'un défi à l'autre
-  const [modes] = useState<('read' | 'write')[]>(() => {
-    const start = Math.random() < 0.5 ? 0 : 1;
-    return items.map((_, i) => ((start + i) % 2 === 0 ? 'read' : 'write'));
+export const ChallengeRunner: React.FC<ChallengeRunnerProps> = ({
+  title,
+  icon,
+  items,
+  pool,
+  voiceEnabled,
+  allowedModes,
+  successMessage,
+  onAnswer,
+  onComplete,
+  onCancel,
+}) => {
+  const canSpeak = voiceEnabled && speechRecognitionSupported;
+
+  // Alterne les modes d'un défi à l'autre (lecture, écriture, lecture au micro)
+  const [modes, setModes] = useState<ChallengeMode[]>(() => {
+    const available = (allowedModes ?? ['read', 'write', 'speak']).filter((m) => m !== 'speak' || canSpeak);
+    const list = available.length ? available : (['read'] as ChallengeMode[]);
+    const start = Math.floor(Math.random() * list.length);
+    return items.map((_, i) => list[(start + i) % list.length]);
   });
   const [index, setIndex] = useState(0);
   const [picked, setPicked] = useState<number[]>([]); // indices des jetons choisis (écriture)
@@ -36,9 +59,13 @@ export const ChallengeRunner: React.FC<ChallengeRunnerProps> = ({ upgrade, items
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
   const [showListen, setShowListen] = useState(false);
   const [checked, setChecked] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [speakFails, setSpeakFails] = useState(0);
 
   const item = items[index];
   const mode = modes[index];
+  // Sans image (mot de l'école), la lecture se fait en retrouvant le mot écrit entendu
+  const listenPick = mode === 'read' && !item.emoji;
   const target = useMemo(() => tokensOf(item), [item]);
   const scrambled = useMemo(() => {
     let s = shuffle(target.map((t, i) => ({ t, i })));
@@ -47,52 +74,82 @@ export const ChallengeRunner: React.FC<ChallengeRunnerProps> = ({ upgrade, items
     }
     return s;
   }, [target]);
-  const choices = useMemo(() => shuffle([item.emoji, ...pickDistractors(item)]), [item]);
+  const choices = useMemo(
+    () => shuffle(item.emoji ? [item.emoji, ...pickDistractors(item)] : [item.content, ...pickWordDistractors(item, pool)]),
+    [item, pool]
+  );
 
   useEffect(() => {
     setPicked([]);
     setWrongChoice(null);
     setFeedback(null);
     setChecked(false);
+    setSpeakFails(0);
     // En lecture, l'audio n'est proposé qu'après une erreur ; en écriture, c'est une dictée
-    setShowListen(mode === 'write');
-    if (mode === 'write') speakFrench(item.content);
-  }, [index]);
+    setShowListen(mode === 'write' || listenPick);
+    if (mode === 'write' || listenPick) speakFrench(item.content);
+  }, [index, mode]);
 
   const succeed = () => {
-    onAnswer(true);
+    onAnswer(true, item, mode);
     playSuccessChime();
     confetti({ particleCount: 60, spread: 60, origin: { y: 0.6 } });
-    setFeedback({ ok: true, msg: index + 1 < items.length ? '⭐ Bravo ! Défi suivant…' : '🎉 Bravo ! Amélioration débloquée !' });
+    setFeedback({ ok: true, msg: index + 1 < items.length ? '⭐ Bravo ! Défi suivant…' : `🎉 ${successMessage ?? 'Bravo !'}` });
     setTimeout(() => {
       if (index + 1 < items.length) {
         setIndex(index + 1);
       } else {
         playUpgradeUnlock();
         confetti({ particleCount: 120, spread: 90, origin: { y: 0.5 } });
-        speakFrench(`Bravo ! Tu as débloqué ${upgrade.name} !`);
         onComplete(items.map((it, i) => ({ word: it.content, mode: modes[i] })));
       }
     }, 1300);
   };
 
-  const fail = (msg: string) => {
-    onAnswer(false);
+  // Une erreur de reconnaissance vocale n'est pas comptée comme une faute de lecture
+  const fail = (msg: string, counts = true) => {
+    if (counts) onAnswer(false, item, mode);
     setFeedback({ ok: false, msg });
     speakFrench('Presque ! Réessaie doucement.');
     setShowListen(true);
   };
 
-  const handleChoice = (emoji: string) => {
+  const handleChoice = (choice: string) => {
     if (feedback?.ok) return;
-    if (emoji === item.emoji) {
+    const answer = item.emoji || item.content;
+    if (choice === answer) {
       setWrongChoice(null);
       succeed();
     } else {
-      setWrongChoice(emoji);
-      fail('Ce n\'est pas cette image. Relis bien le mot, syllabe par syllabe !');
+      setWrongChoice(choice);
+      fail(listenPick ? 'Ce n\'est pas ce mot. Écoute encore et regarde bien les lettres !' : 'Ce n\'est pas cette image. Relis bien, syllabe par syllabe !');
     }
   };
+
+  const handleSpeak = async () => {
+    if (listening || feedback?.ok) return;
+    setListening(true);
+    setFeedback(null);
+    try {
+      const heard = await listenOnce();
+      if (spokenMatches(item.content, heard)) {
+        succeed();
+      } else {
+        setSpeakFails((n) => n + 1);
+        fail(
+          heard.length ? `J'ai entendu « ${heard[0]} ». Relis bien et réessaie !` : 'Je n\'ai rien entendu. Parle bien fort près de l\'écran !',
+          false
+        );
+      }
+    } catch {
+      setFeedback({ ok: false, msg: 'Le micro ne marche pas ici. Utilise les images !' });
+      setSpeakFails(2);
+    } finally {
+      setListening(false);
+    }
+  };
+
+  const switchToRead = () => setModes((prev) => prev.map((m, i) => (i === index ? 'read' : m)));
 
   const handlePick = (k: number) => {
     if (feedback?.ok || picked.includes(k) || picked.length >= target.length) return;
@@ -117,16 +174,35 @@ export const ChallengeRunner: React.FC<ChallengeRunnerProps> = ({ upgrade, items
 
   const sep = item.type === 'sentence' ? 'gap-1.5' : 'gap-1';
   const slotSize = item.type === 'sentence' ? 'px-2 h-11 min-w-[44px] text-base' : 'w-10 h-12 sm:w-11 sm:h-14 text-xl sm:text-2xl';
+  const modeLabel = mode === 'write' ? '✍️ Écriture' : mode === 'speak' ? '🎤 Lecture à voix haute' : '📖 Lecture';
+
+  // Le mot à lire, découpé en syllabes cliquables si possible
+  const readingText = item.syllables ? (
+    <div className="flex justify-center flex-wrap gap-2 my-3">
+      {item.syllables.map((syl, i) => (
+        <button
+          key={i}
+          onClick={() => mode !== 'speak' && speakFrench(syl)}
+          className="px-4 py-2.5 rounded-2xl bg-gradient-to-b from-sky-400 to-blue-600 border-2 border-white text-2xl font-black text-white shadow-lg active:scale-95 transition-transform cursor-pointer"
+        >
+          {syl}
+        </button>
+      ))}
+    </div>
+  ) : (
+    <div className="my-3 p-3 rounded-2xl bg-white/10 border-2 border-cyan-400 text-xl sm:text-2xl font-extrabold">{item.content}</div>
+  );
 
   return (
     <div className="bg-sky-950/90 rounded-2xl p-4 border-2 border-sky-400/60 flex flex-col gap-3">
       <div className="flex items-center justify-between border-b border-sky-800 pb-2">
         <div className="flex items-center gap-2">
-          <span className="text-3xl">{upgrade.icon}</span>
+          <span className="text-3xl">{icon}</span>
           <div>
-            <h3 className="font-extrabold text-base text-amber-300">{upgrade.name}</h3>
+            <h3 className="font-extrabold text-base text-amber-300">{title}</h3>
             <p className="text-xs text-sky-200">
-              Défi {index + 1} / {items.length} • {mode === 'read' ? '📖 Lecture' : '✍️ Écriture'}
+              Défi {index + 1} / {items.length} • {modeLabel}
+              {item.custom && ' • 🏫 Mot de l\'école'}
             </p>
           </div>
         </div>
@@ -148,28 +224,35 @@ export const ChallengeRunner: React.FC<ChallengeRunnerProps> = ({ upgrade, items
         )}
       </div>
 
-      {mode === 'read' ? (
+      {mode === 'read' && listenPick && (
+        <div className="text-center">
+          <p className="text-xs text-sky-300 font-semibold">Écoute, puis touche le mot que tu as entendu !</p>
+          <div className="flex flex-col sm:flex-row justify-center gap-2 my-3">
+            {choices.map((c) => (
+              <button
+                key={c}
+                onClick={() => handleChoice(c)}
+                className={`px-4 py-3 rounded-2xl text-lg font-black border-4 transition-all cursor-pointer active:scale-95 ${
+                  feedback?.ok && c === item.content
+                    ? 'bg-emerald-500/40 border-emerald-300'
+                    : wrongChoice === c
+                    ? 'bg-rose-500/30 border-rose-400 opacity-60'
+                    : 'bg-white/10 border-sky-400/60 hover:border-amber-300'
+                }`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {mode === 'read' && !listenPick && (
         <div className="text-center">
           <p className="text-xs text-sky-300 font-semibold">
             Lis {item.type === 'sentence' ? 'la phrase' : 'le mot'}, puis touche la bonne image !
           </p>
-          {item.syllables ? (
-            <div className="flex justify-center flex-wrap gap-2 my-3">
-              {item.syllables.map((syl, i) => (
-                <button
-                  key={i}
-                  onClick={() => speakFrench(syl)}
-                  className="px-4 py-2.5 rounded-2xl bg-gradient-to-b from-sky-400 to-blue-600 border-2 border-white text-2xl font-black text-white shadow-lg active:scale-95 transition-transform cursor-pointer"
-                >
-                  {syl}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="my-3 p-3 rounded-2xl bg-white/10 border-2 border-cyan-400 text-xl sm:text-2xl font-extrabold">
-              {item.content}
-            </div>
-          )}
+          {readingText}
           <div className="flex justify-center gap-3 my-2">
             {choices.map((e) => (
               <button
@@ -187,18 +270,42 @@ export const ChallengeRunner: React.FC<ChallengeRunnerProps> = ({ upgrade, items
               </button>
             ))}
           </div>
-          {item.explanation && item.syllables && (
-            <p className="text-[11px] text-sky-200 italic mt-1">« {item.explanation} »</p>
+          {item.explanation && item.syllables && <p className="text-[11px] text-sky-200 italic mt-1">« {item.explanation} »</p>}
+        </div>
+      )}
+
+      {mode === 'speak' && (
+        <div className="text-center">
+          <p className="text-xs text-sky-300 font-semibold">
+            Appuie sur le micro et lis {item.type === 'sentence' ? 'la phrase' : 'le mot'} à voix haute !
+          </p>
+          {readingText}
+          <button
+            onClick={handleSpeak}
+            disabled={listening || feedback?.ok}
+            className={`mx-auto mt-1 w-24 h-24 rounded-full border-4 border-white flex flex-col items-center justify-center font-black text-xs shadow-xl transition-all cursor-pointer ${
+              listening ? 'bg-rose-500 animate-pulse' : 'bg-gradient-to-b from-emerald-400 to-teal-600 active:scale-90'
+            }`}
+          >
+            <Mic className="w-9 h-9" />
+            {listening ? 'J\'écoute…' : 'Parler'}
+          </button>
+          {speakFails >= 2 && !feedback?.ok && (
+            <button onClick={switchToRead} className="mt-3 text-xs font-bold text-sky-300 underline cursor-pointer">
+              Le micro ne m'entend pas : utiliser les {item.emoji ? 'images' : 'mots'}
+            </button>
           )}
         </div>
-      ) : (
+      )}
+
+      {mode === 'write' && (
         <div className="text-center">
           <p className="text-xs text-sky-300 font-semibold">
             {item.type === 'sentence'
               ? 'Écoute la phrase et remets les mots dans le bon ordre !'
               : 'Écoute le mot et écris-le avec les lettres !'}
           </p>
-          <div className="text-5xl my-2">{item.emoji}</div>
+          {item.emoji && <div className="text-5xl my-2">{item.emoji}</div>}
           <div className={`flex flex-wrap justify-center ${sep} my-2 min-h-[48px]`}>
             {target.map((t, slot) => {
               const k = picked[slot];

@@ -12,6 +12,7 @@ export function requiredPowerFor(level: number): number {
 /**
  * Niveaux impairs : éclater tous les bonshommes.
  * Niveaux pairs : défendre le château pendant 1 minute.
+ * Niveaux 5, 10, 15... : boss.
  * Les bonshommes deviennent plus résistants et frappent plus fort à chaque niveau :
  * sans amélioration du robot, la victoire devient impossible.
  */
@@ -27,6 +28,23 @@ export function getLevelConfig(level: number): LevelConfig {
     enemyDamage: Math.round(10 + d * 1.5),
     requiredPower: requiredPowerFor(n),
   };
+
+  // Tous les 5 niveaux : un boss géant protégé par un bouclier que seule la lecture brise
+  if (n % 5 === 0) {
+    return {
+      ...common,
+      mode: 'boss',
+      enemyCount: 1,
+      enemyHp: Math.round(3 * growth * 8),
+      enemyScale: 2.4,
+      enemySpeed: Math.min(1 + d * 0.04, 2),
+      throwInterval: Math.max(common.throwInterval * 0.6, 1.5),
+      duration: 0,
+      castleHp: 0,
+      title: `Niveau ${n} : Le Boss des neiges`,
+      hint: 'Lis une phrase pour briser le bouclier du Boss ! 👑',
+    };
+  }
 
   if (n % 2 === 1) {
     const enemyCount = Math.min(5 + Math.floor(d / 2) * 2, 14);

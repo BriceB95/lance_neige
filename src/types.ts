@@ -6,10 +6,17 @@ export interface CurriculumItem {
   level: DifficultyLevel;
   type: 'word' | 'sentence';
   content: string; // Le texte à lire ou écrire
-  emoji: string; // Image associée (vérifie que l'enfant a compris ce qu'il a lu)
+  emoji: string; // Image associée (vide pour les mots ajoutés par le parent)
   hint: string;
   syllables?: string[]; // ex. ["RO", "BOT"]
   explanation?: string;
+  custom?: boolean; // mot de l'école saisi par le parent
+}
+
+export interface ReviewEntry {
+  box: number; // 0 = à revoir tout de suite ... 4 = bien su
+  due: string; // date de prochaine révision (AAAA-MM-JJ)
+  errors: number;
 }
 
 export type UpgradeCategory = 'canon' | 'reservoir' | 'moteur' | 'armure' | 'gadget' | 'style';
@@ -76,6 +83,10 @@ export interface ParentStats {
   accuracyRate: number; // percentage
   answersTotal: number;
   answersCorrect: number;
+  dailyLimitMinutes: number; // temps de jeu maximum par jour
+  customWords: string[]; // mots de la semaine donnés par l'école
+  wordReview: Record<string, ReviewEntry>; // révision espacée
+  voiceEnabled: boolean; // lecture à voix haute au micro
   challengesCompleted: number;
   snowballsThrown: number;
   snowCollected: number;
@@ -92,7 +103,7 @@ export interface PlayerState {
   gameLevel: number;
 }
 
-export type LevelMode = 'clear' | 'defend';
+export type LevelMode = 'clear' | 'defend' | 'boss';
 
 export interface LevelConfig {
   number: number;
