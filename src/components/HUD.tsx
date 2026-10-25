@@ -18,6 +18,8 @@ interface HUDProps {
   onOpenParentPortal: () => void;
   activeMissionHint: string;
   levelProgress: LevelProgress | null;
+  timeLeftLabel: string;
+  timeLow: boolean;
 }
 
 export const HUD: React.FC<HUDProps> = ({
@@ -34,6 +36,8 @@ export const HUD: React.FC<HUDProps> = ({
   onOpenParentPortal,
   activeMissionHint,
   levelProgress,
+  timeLeftLabel,
+  timeLow,
 }) => {
   const snowPercent = Math.min(100, Math.round((snowAmmo / maxSnow) * 100));
   const healthPercent = Math.min(100, Math.round((health / maxHealth) * 100));
@@ -166,6 +170,9 @@ export const HUD: React.FC<HUDProps> = ({
         <div className="pointer-events-none self-center flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-indigo-950/85 backdrop-blur-md px-4 py-1.5 rounded-2xl border-2 border-amber-300/70 shadow-md text-xs font-black text-white">
           <span className="text-amber-300">Niveau {levelProgress.level}</span>
           <span className="text-yellow-200 sm:hidden">⚡ {power}</span>
+          <span className={timeLow ? 'text-rose-300 animate-pulse' : 'text-sky-200'} title="Temps de jeu restant aujourd'hui">
+            ⏳ {timeLeftLabel}
+          </span>
           <span>⛄ {levelProgress.killed}/{levelProgress.total}</span>
           {levelProgress.mode === 'defend' && (
             <>

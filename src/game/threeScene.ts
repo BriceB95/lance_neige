@@ -145,6 +145,7 @@ export class RoboNeigeScene {
   private particles: SplatParticle[] = [];
   private snowParticlesInstanced: THREE.InstancedMesh | null = null;
   private snowParticleMatrices: THREE.Matrix4[] = [];
+  private pileMat: THREE.MeshStandardMaterial | null = null;
   private hearts: HeartPickup[] = [];
   private debris: Debris[] = [];
   private castle: THREE.Group | null = null;
@@ -325,7 +326,14 @@ export class RoboNeigeScene {
     this.applyTerrainTheme(theme);
   }
 
+  private pileColorFor(theme: TerrainTheme): number {
+    // Bleu glacier sur la neige blanche, blanc sur la glace bleue et la vallée sombre
+    return theme === 'snow-forest' ? 0x38bdf8 : 0xffffff;
+  }
+
   private applyTerrainTheme(theme: TerrainTheme) {
+    this.pileMat?.color.setHex(this.pileColorFor(theme));
+
     // 1. Clear existing terrain props
     while (this.terrainPropsGroup.children.length > 0) {
       const child = this.terrainPropsGroup.children[0];
@@ -793,13 +801,27 @@ export class RoboNeigeScene {
 
   private createSnowPiles(count: number) {
     const pileGeo = new THREE.SphereGeometry(0.9, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.5);
+    // Couleur adaptée au paysage pour bien ressortir du sol
     const pileMat = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      roughness: 0.5,
+      color: this.pileColorFor(this.currentTerrainTheme),
+      emissive: 0x1d4ed8,
+      emissiveIntensity: 0.25,
+      roughness: 0.4,
       metalness: 0.1,
     });
+    this.pileMat = pileMat;
 
-    const sparkleGeo = new THREE.OctahedronGeometry(0.18);
+    // Anneau orange au sol qui pulse : repérable sur tous les paysages
+    const ringGeo = new THREE.RingGeometry(1.25, 1.55, 28);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xf59e0b,
+      transparent: true,
+      opacity: 0.8,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+
+    const sparkleGeo = new THREE.OctahedronGeometry(0.28);
     const sparkleMat = new THREE.MeshStandardMaterial({
       color: 0x38bdf8,
       emissive: 0x7dd3fc,
@@ -818,6 +840,11 @@ export class RoboNeigeScene {
       const sparkle = new THREE.Mesh(sparkleGeo, sparkleMat);
       sparkle.position.y = 0.75;
       group.add(sparkle);
+
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.18;
+      group.add(ring);
 
       // Random position avoiding initial center
       const angle = Math.random() * Math.PI * 2;
@@ -1589,6 +1616,9 @@ export class RoboNeigeScene {
           sparkle.rotation.y = time * 2;
           sparkle.position.y = 0.75 + Math.sin(time * 3 + pile.x) * 0.12;
         }
+        // Anneau qui respire
+        const ring = pile.group.children[2];
+        if (ring) ring.scale.setScalar(1 + Math.sin(time * 4 + pile.z) * 0.08);
       }
     }
 

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, ShieldCheck, BookOpen, PenTool, Award, Clock, Target, AlertTriangle, RefreshCw } from 'lucide-react';
 import { ParentStats, DifficultyLevel } from '../types';
+import { formatDuration } from '../hooks/useDailyPlayTime';
 
 interface ParentPortalProps {
   isOpen: boolean;
@@ -8,6 +9,10 @@ interface ParentPortalProps {
   stats: ParentStats;
   onUpdateLevel: (level: DifficultyLevel) => void;
   onResetData: () => void;
+  usedTodaySeconds: number;
+  remainingTodaySeconds: number;
+  onChangeDailyLimit: (minutes: number) => void;
+  onAddMinutes: (minutes: number) => void;
 }
 
 export const ParentPortal: React.FC<ParentPortalProps> = ({
@@ -16,16 +21,19 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
   stats,
   onUpdateLevel,
   onResetData,
+  usedTodaySeconds,
+  remainingTodaySeconds,
+  onChangeDailyLimit,
+  onAddMinutes,
 }) => {
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [gateAnswer, setGateAnswer] = useState('');
   const [gateError, setGateError] = useState(false);
   const [showConfirmReset, setShowConfirmReset] = useState(false);
 
-  // Security gate: simple math problem
-  const num1 = 4;
-  const num2 = 3;
-  const expectedAnswer = num1 * num2; // 12
+  // Calcul aléatoire (tables de 6 à 9) pour que l'enfant ne retienne pas la réponse
+  const [[num1, num2]] = useState(() => [6 + Math.floor(Math.random() * 4), 6 + Math.floor(Math.random() * 4)]);
+  const expectedAnswer = num1 * num2;
 
   if (!isOpen) return null;
 
@@ -160,6 +168,35 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Temps de jeu quotidien */}
+            <div className="bg-slate-800/50 p-3.5 rounded-2xl border border-slate-700/80">
+              <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">Temps de jeu par jour</h4>
+              <p className="text-[11px] text-slate-400 mb-2">
+                Aujourd'hui : {formatDuration(usedTodaySeconds)} joué • reste {formatDuration(remainingTodaySeconds)}
+              </p>
+              <div className="grid grid-cols-5 gap-1.5">
+                {[30, 60, 90, 120, 180].map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => onChangeDailyLimit(m)}
+                    className={`py-2 rounded-xl border text-xs font-bold cursor-pointer ${
+                      stats.dailyLimitMinutes === m
+                        ? 'bg-cyan-950 border-cyan-400 text-white'
+                        : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'
+                    }`}
+                  >
+                    {formatDuration(m * 60)}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => onAddMinutes(30)}
+                className="mt-2 w-full py-2 rounded-xl bg-indigo-700 hover:bg-indigo-600 text-xs font-bold text-white cursor-pointer"
+              >
+                + 30 min exceptionnellement aujourd'hui
+              </button>
             </div>
 
             {/* Mastered Words Tags */}

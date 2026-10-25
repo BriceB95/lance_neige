@@ -10,6 +10,8 @@ import { LevelOverlay } from './components/LevelOverlay';
 import { getLevelConfig, requiredPowerFor } from './data/levels';
 import { computeLook, computePower, computeRobotStats } from './data/upgrades';
 import { ChallengeResult } from './components/ChallengeRunner';
+import { TimeUpOverlay } from './components/TimeUpOverlay';
+import { useDailyPlayTime, formatDuration } from './hooks/useDailyPlayTime';
 import { RoboNeigeScene } from './game/threeScene';
 import {
   loadPlayerState,
@@ -57,6 +59,21 @@ export default function App() {
   const [isRewardsOpen, setIsRewardsOpen] = useState(false);
   const [isParentPortalOpen, setIsParentPortalOpen] = useState(false);
 
+  // Limite de temps de jeu par jour (réglable dans l'Espace Parents)
+  const playTime = useDailyPlayTime(parentStats.dailyLimitMinutes);
+  const warnedRef = useRef<number | null>(null);
+  useEffect(() => {
+    const r = playTime.remainingSeconds;
+    for (const mark of [600, 60]) {
+      if (r <= mark && r > mark - 5 && warnedRef.current !== mark) {
+        warnedRef.current = mark;
+        const msg = mark === 600 ? 'Plus que 10 minutes de jeu aujourd\'hui !' : 'Plus qu\'une minute de jeu !';
+        setMissionHint(`⏳ ${msg}`);
+        speakFrench(msg);
+      }
+    }
+  }, [playTime.remainingSeconds]);
+
   // Level state
   const [gameStatus, setGameStatus] = useState<'playing' | 'won' | 'lost'>('playing');
   const [failReason, setFailReason] = useState<'robot' | 'castle'>('robot');
@@ -74,6 +91,7 @@ export default function App() {
 
   // Pause du jeu quand une fenêtre est ouverte ou le niveau terminé
   const isPaused =
+    playTime.isOver ||
     gameStatus !== 'playing' ||
     isWorkshopOpen ||
     isRewardsOpen ||
@@ -447,6 +465,8 @@ export default function App() {
         onOpenParentPortal={() => setIsParentPortalOpen(true)}
         activeMissionHint={missionHint}
         levelProgress={levelProgress}
+        timeLeftLabel={formatDuration(playTime.remainingSeconds)}
+        timeLow={playTime.remainingSeconds <= 600}
       />
 
       {/* Virtual Joystick & Action Buttons */}
@@ -489,6 +509,10 @@ export default function App() {
         stats={parentStats}
         onUpdateLevel={handleUpdateLevel}
         onResetData={handleResetData}
+        usedTodaySeconds={playTime.usedSeconds}
+        remainingTodaySeconds={playTime.remainingSeconds}
+        onChangeDailyLimit={(minutes) => setParentStats((prev) => ({ ...prev, dailyLimitMinutes: minutes }))}
+        onAddMinutes={playTime.addMinutes}
       />
 
       {/* Level Won / Lost Overlay */}
@@ -502,6 +526,12 @@ export default function App() {
         power={power}
         requiredPower={nextLevelRequired}
         onOpenWorkshop={() => setIsWorkshopOpen(true)}
+      />
+
+      {/* Fin du temps de jeu de la journée */}
+      <TimeUpOverlay
+        visible={playTime.isOver && !isParentPortalOpen}
+        onOpenParentPortal={() => setIsParentPortalOpen(true)}
       />
 
       {/* Celebratory Reward Ceremony Overlay */}

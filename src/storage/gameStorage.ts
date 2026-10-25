@@ -25,6 +25,7 @@ const DEFAULT_PARENT_STATS: ParentStats = {
   accuracyRate: 100,
   answersTotal: 0,
   answersCorrect: 0,
+  dailyLimitMinutes: 120,
   challengesCompleted: 0,
   snowballsThrown: 0,
   snowCollected: 5,

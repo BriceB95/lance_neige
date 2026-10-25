@@ -76,6 +76,7 @@ export interface ParentStats {
   accuracyRate: number; // percentage
   answersTotal: number;
   answersCorrect: number;
+  dailyLimitMinutes: number; // temps de jeu maximum par jour
   challengesCompleted: number;
   snowballsThrown: number;
   snowCollected: number;
