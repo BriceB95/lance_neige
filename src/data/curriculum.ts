@@ -1,4 +1,4 @@
-import { CurriculumItem, DifficultyLevel, Trophy, StickerReward } from '../types';
+import { CurriculumItem, DifficultyLevel, ReviewEntry, Trophy, StickerReward } from '../types';
 
 const slug = (s: string) =>
   s
@@ -125,23 +125,91 @@ export const CURRICULUM_ITEMS: CurriculumItem[] = [
 
 const LEVEL_ORDER: DifficultyLevel[] = ['cp1', 'cp2', 'ce1'];
 
+export const todayKey = () => new Date().toLocaleDateString('fr-CA');
+
+const addDays = (days: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toLocaleDateString('fr-CA');
+};
+
+/** Mots de l'école saisis par le parent (un par ligne) */
+export function buildCustomItems(lines: string[]): CurriculumItem[] {
+  return lines
+    .map((l) => l.trim().replace(/\s+/g, ' '))
+    .filter((l) => l.length > 0)
+    .map((l) => {
+      const isSentence = l.includes(' ');
+      const content = isSentence ? l.charAt(0).toUpperCase() + l.slice(1) : l.toUpperCase();
+      return {
+        id: `custom-${slug(content)}`,
+        level: 'cp1' as DifficultyLevel,
+        type: isSentence ? 'sentence' : 'word',
+        content,
+        emoji: '',
+        hint: isSentence ? 'Une phrase de l\'école !' : 'Un mot de la semaine de l\'école !',
+        custom: true,
+      } as CurriculumItem;
+    });
+}
+
+// Intervalles de révision (jours) selon la boîte : plus le mot est su, plus il revient tard
+const REVIEW_DAYS = [0, 1, 3, 7, 21];
+
+export function updateReview(review: Record<string, ReviewEntry>, word: string, correct: boolean): Record<string, ReviewEntry> {
+  const prev = review[word];
+  let box: number;
+  if (!correct) box = 0;
+  else if (!prev) box = 3; // réussi du premier coup
+  else box = Math.min(4, prev.box + 1);
+  return {
+    ...review,
+    [word]: { box, due: addDays(REVIEW_DAYS[box]), errors: (prev?.errors ?? 0) + (correct ? 0 : 1) },
+  };
+}
+
+/** Mots ratés à retravailler (boîte 0 à 2) */
+export function wordsToReview(review: Record<string, ReviewEntry>): string[] {
+  return Object.entries(review)
+    .filter(([, r]) => r.box <= 2)
+    .sort((a, b) => a[1].box - b[1].box || b[1].errors - a[1].errors)
+    .map(([w]) => w);
+}
+
+interface PickOptions {
+  custom: CurriculumItem[];
+  review: Record<string, ReviewEntry>;
+  preferType?: 'word' | 'sentence';
+}
+
 /**
- * Choisit des défis adaptés au niveau scolaire réglé par le parent,
- * en privilégiant les mots pas encore maîtrisés.
+ * Choisit les défis : d'abord les mots ratés à revoir aujourd'hui, puis les mots de l'école,
+ * puis des mots nouveaux du niveau scolaire réglé par le parent.
  */
-export function pickChallenges(level: DifficultyLevel, count: number, mastered: string[]): CurriculumItem[] {
+export function pickChallenges(level: DifficultyLevel, count: number, mastered: string[], opts: PickOptions): CurriculumItem[] {
   const maxIdx = LEVEL_ORDER.indexOf(level);
-  const pool = CURRICULUM_ITEMS.filter((c) => LEVEL_ORDER.indexOf(c.level) <= maxIdx);
+  const base = CURRICULUM_ITEMS.filter((c) => LEVEL_ORDER.indexOf(c.level) <= maxIdx);
+  const all = [...opts.custom, ...base];
   const shuffle = <T,>(arr: T[]) => [...arr].sort(() => Math.random() - 0.5);
-  const fresh = pool.filter((c) => !mastered.includes(c.content));
-  // Surtout des mots du niveau actuel, un peu de révision des niveaux précédents
+  const today = todayKey();
+  const typeOk = (c: CurriculumItem) => !opts.preferType || c.type === opts.preferType;
+
+  const due = all
+    .filter((c) => opts.review[c.content] && opts.review[c.content].due <= today && opts.review[c.content].box <= 2)
+    .sort((a, b) => opts.review[a.content].box - opts.review[b.content].box);
+  const customFresh = shuffle(opts.custom.filter((c) => !mastered.includes(c.content)));
+  const fresh = base.filter((c) => !mastered.includes(c.content) && !opts.review[c.content]);
   const current = shuffle(fresh.filter((c) => c.level === level));
-  const review = shuffle(fresh.filter((c) => c.level !== level));
-  const ordered = [...current, ...review, ...shuffle(pool)];
+  const older = shuffle(fresh.filter((c) => c.level !== level));
+  const ordered = [...due, ...customFresh, ...current, ...older, ...shuffle(all)];
+
   const picked: CurriculumItem[] = [];
-  for (const item of ordered) {
-    if (picked.length >= count) break;
-    if (!picked.includes(item)) picked.push(item);
+  for (const pass of [true, false]) {
+    for (const item of ordered) {
+      if (picked.length >= count) break;
+      if (picked.includes(item) || (pass && !typeOk(item))) continue;
+      picked.push(item);
+    }
   }
   return picked;
 }
@@ -150,6 +218,17 @@ export function pickChallenges(level: DifficultyLevel, count: number, mastered: 
 export function pickDistractors(item: CurriculumItem, count = 2): string[] {
   const emojis = Array.from(new Set(CURRICULUM_ITEMS.map((c) => c.emoji))).filter((e) => e !== item.emoji);
   return emojis.sort(() => Math.random() - 0.5).slice(0, count);
+}
+
+/** Mots pièges écrits (pour les mots de l'école, qui n'ont pas d'image) */
+export function pickWordDistractors(item: CurriculumItem, pool: CurriculumItem[], count = 2): string[] {
+  const candidates = Array.from(
+    new Set([...pool, ...CURRICULUM_ITEMS].filter((c) => c.type === item.type && c.content !== item.content).map((c) => c.content))
+  );
+  // Privilégie des mots de longueur proche pour obliger à bien lire
+  return candidates
+    .sort((a, b) => Math.abs(a.length - item.content.length) - Math.abs(b.length - item.content.length) + (Math.random() - 0.5) * 4)
+    .slice(0, count);
 }
 
 export const TROPHIES_LIST: Trophy[] = [

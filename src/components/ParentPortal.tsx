@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, ShieldCheck, BookOpen, PenTool, Award, Clock, Target, AlertTriangle, RefreshCw } from 'lucide-react';
 import { ParentStats, DifficultyLevel } from '../types';
 import { formatDuration } from '../hooks/useDailyPlayTime';
+import { ParentSettings } from './ParentSettings';
 
 interface ParentPortalProps {
   isOpen: boolean;
@@ -13,6 +14,9 @@ interface ParentPortalProps {
   remainingTodaySeconds: number;
   onChangeDailyLimit: (minutes: number) => void;
   onAddMinutes: (minutes: number) => void;
+  onChangeCustomWords: (words: string[]) => void;
+  onToggleVoice: (enabled: boolean) => void;
+  onSyncNow: () => Promise<boolean>;
 }
 
 export const ParentPortal: React.FC<ParentPortalProps> = ({
@@ -25,6 +29,9 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
   remainingTodaySeconds,
   onChangeDailyLimit,
   onAddMinutes,
+  onChangeCustomWords,
+  onToggleVoice,
+  onSyncNow,
 }) => {
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [gateAnswer, setGateAnswer] = useState('');
@@ -198,6 +205,13 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
                 + 30 min exceptionnellement aujourd'hui
               </button>
             </div>
+
+            <ParentSettings
+              stats={stats}
+              onChangeCustomWords={onChangeCustomWords}
+              onToggleVoice={onToggleVoice}
+              onSyncNow={onSyncNow}
+            />
 
             {/* Mastered Words Tags */}
             <div className="bg-slate-800/50 p-3.5 rounded-2xl border border-slate-700/80">

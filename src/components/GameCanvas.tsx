@@ -48,6 +48,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       onLevelProgress: (p) => callbacksRef.current.onLevelProgress?.(p),
       onLevelComplete: () => callbacksRef.current.onLevelComplete?.(),
       onLevelFailed: (r) => callbacksRef.current.onLevelFailed?.(r),
+      onChestFound: () => callbacksRef.current.onChestFound?.(),
+      onBossShield: (shielded) => callbacksRef.current.onBossShield?.(shielded),
     });
     sceneRef.current = scene;
     scene.startLevel(initialLevel);

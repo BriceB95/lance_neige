@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { profileKey } from '../storage/profiles';
 
 const STORAGE_KEY = 'roboneige_playtime_v1';
 
@@ -13,7 +14,7 @@ const freshRecord = (): PlayTimeRecord => ({ date: todayKey(), seconds: 0, extra
 
 function loadRecord(): PlayTimeRecord {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(profileKey(STORAGE_KEY));
     if (raw) {
       const rec = JSON.parse(raw) as PlayTimeRecord;
       if (rec.date === todayKey()) return rec;
@@ -55,7 +56,7 @@ export function useDailyPlayTime(limitMinutes: number) {
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(record));
+      localStorage.setItem(profileKey(STORAGE_KEY), JSON.stringify(record));
     } catch (e) {
       console.warn('Storage save error:', e);
     }

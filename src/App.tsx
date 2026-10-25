@@ -9,7 +9,12 @@ import { CelebrationOverlay } from './components/CelebrationOverlay';
 import { LevelOverlay } from './components/LevelOverlay';
 import { getLevelConfig, requiredPowerFor } from './data/levels';
 import { computeLook, computePower, computeRobotStats } from './data/upgrades';
-import { ChallengeResult } from './components/ChallengeRunner';
+import { ChallengeMode, ChallengeResult } from './components/ChallengeRunner';
+import { ReadingTask, ReadingTaskModal } from './components/ReadingTaskModal';
+import { ProfilePicker } from './components/ProfilePicker';
+import { buildCustomItems, pickChallenges, updateReview, wordsToReview } from './data/curriculum';
+import { currentProfile, loadProfilesStore, needsProfileChoice } from './storage/profiles';
+import { flushToSheets, isValidSheetsUrl, queueAnswer } from './sync/sheetsSync';
 import { TimeUpOverlay } from './components/TimeUpOverlay';
 import { useDailyPlayTime, formatDuration } from './hooks/useDailyPlayTime';
 import { RoboNeigeScene } from './game/threeScene';
@@ -26,7 +31,7 @@ import {
   saveStickers,
   resetAllData,
 } from './storage/gameStorage';
-import { PlayerState, UpgradeItem, ParentStats, Trophy, StickerReward, DifficultyLevel, TerrainTheme, LevelProgress } from './types';
+import { CurriculumItem, PlayerState, UpgradeItem, ParentStats, Trophy, StickerReward, DifficultyLevel, TerrainTheme, LevelProgress } from './types';
 import { speakFrench } from './audio/soundEffects';
 
 export default function App() {
@@ -85,6 +90,13 @@ export default function App() {
 
   const sceneRef = useRef<RoboNeigeScene | null>(null);
 
+  // Profil, mots de l'école, défis de lecture en jeu (coffres, boss)
+  const profile = useMemo(currentProfile, []);
+  const [showProfilePicker, setShowProfilePicker] = useState(needsProfileChoice);
+  const customItems = useMemo(() => buildCustomItems(parentStats.customWords), [parentStats.customWords]);
+  const [readingTask, setReadingTask] = useState<ReadingTask | null>(null);
+  const [bossShielded, setBossShielded] = useState(false);
+
   // Stock réel de boules, mis à jour immédiatement à chaque tir (anti tir illimité)
   const ammoRef = useRef(playerState.snowAmmo);
   ammoRef.current = playerState.snowAmmo;
@@ -96,6 +108,8 @@ export default function App() {
     isWorkshopOpen ||
     isRewardsOpen ||
     isParentPortalOpen ||
+    showProfilePicker ||
+    readingTask !== null ||
     celebrationReward !== null;
 
   useEffect(() => {
@@ -247,6 +261,56 @@ export default function App() {
   const handleLevelComplete = () => {
     setPlayerState((prev) => ({ ...prev, score: prev.score + 200, stars: prev.stars + 3 }));
     setGameStatus('won');
+    syncNow();
+  };
+
+  // Coffre trouvé : il s'ouvre en lisant un mot
+  const handleChestFound = () => {
+    const items = pickChallenges(parentStats.currentLevel, 1, parentStats.masteredWords, {
+      custom: customItems,
+      review: parentStats.wordReview,
+    });
+    speakFrench('Un coffre magique ! Lis le mot pour l\'ouvrir !');
+    setReadingTask({ kind: 'chest', items, key: Date.now() });
+  };
+
+  // Bouclier du boss : il se brise en lisant une phrase
+  const handleBreakShield = () => {
+    const items = pickChallenges(parentStats.currentLevel, 1, parentStats.masteredWords, {
+      custom: customItems,
+      review: parentStats.wordReview,
+      preferType: 'sentence',
+    });
+    setReadingTask({ kind: 'boss', items, key: Date.now() });
+  };
+
+  const handleReadingTaskDone = (task: ReadingTask, results: ChallengeResult[]) => {
+    setReadingTask(null);
+    recordReading(results);
+    if (task.kind === 'boss') {
+      sceneRef.current?.breakBossShield(15);
+      setMissionHint('Le bouclier est brisé ! Vite, lance tes boules ! 💥');
+      speakFrench('Le bouclier est brisé ! Vite, lance tes boules !');
+      return;
+    }
+    const rewards = [
+      () => {
+        setPlayerState((prev) => ({ ...prev, snowAmmo: stats.maxSnow }));
+        return 'Réservoir de neige rempli ! ❄️';
+      },
+      () => {
+        setPlayerState((prev) => ({ ...prev, health: Math.min(stats.maxHealth, prev.health + Math.round(stats.maxHealth * 0.3)) }));
+        return 'Énergie +30% ! ❤️';
+      },
+      () => {
+        sceneRef.current?.activateBoost(20);
+        return 'Super-tir doré pendant 20 secondes ! ⭐';
+      },
+    ];
+    const msg = rewards[Math.floor(Math.random() * rewards.length)]();
+    setPlayerState((prev) => ({ ...prev, score: prev.score + 50 }));
+    setMissionHint(`🎁 ${msg}`);
+    speakFrench(msg.replace(/[^\p{L}\p{N}\s%',!.+]/gu, ''));
   };
 
   // Handler: level failed (château détruit)
@@ -314,8 +378,8 @@ export default function App() {
     }
   };
 
-  // Handler: chaque réponse à un défi (pour le taux de réussite parent)
-  const handleAnswer = (correct: boolean) => {
+  // Handler: chaque réponse à un défi (réussite parent, révisions, Google Sheets)
+  const handleAnswer = (correct: boolean, item: CurriculumItem, mode: ChallengeMode) => {
     setParentStats((prev) => {
       const answersTotal = prev.answersTotal + 1;
       const answersCorrect = prev.answersCorrect + (correct ? 1 : 0);
@@ -324,9 +388,63 @@ export default function App() {
         answersTotal,
         answersCorrect,
         accuracyRate: Math.round((answersCorrect / answersTotal) * 100),
+        wordReview: updateReview(prev.wordReview, item.content, correct),
       };
     });
+    if (isValidSheetsUrl(loadProfilesStore().settings.sheetsUrl)) queueAnswer(profile.name, item.content, mode, correct);
   };
+
+  // Comptabilise les mots lus / écrits d'une série de défis réussis
+  const recordReading = (results: ChallengeResult[]) => {
+    const reads = results.filter((r) => r.mode !== 'write');
+    const writes = results.filter((r) => r.mode === 'write');
+    setParentStats((prev) => {
+      const masteredWords = [...prev.masteredWords];
+      results.forEach((r) => {
+        if (!masteredWords.includes(r.word)) masteredWords.push(r.word);
+      });
+      return {
+        ...prev,
+        wordsReadCount: prev.wordsReadCount + reads.length,
+        wordsWrittenCount: prev.wordsWrittenCount + writes.length,
+        challengesCompleted: prev.challengesCompleted + results.length,
+        masteredWords,
+      };
+    });
+    if (reads.length) checkTrophies('read');
+    if (writes.length) checkTrophies('write');
+    return { reads, writes };
+  };
+
+  // Envoi des progrès vers Google Sheets
+  const syncNow = async (): Promise<boolean> => {
+    const { sheetsUrl, sheetsToken } = loadProfilesStore().settings;
+    if (!isValidSheetsUrl(sheetsUrl)) return false;
+    return flushToSheets(sheetsUrl, sheetsToken, {
+      type: 'summary',
+      date: new Date().toLocaleDateString('fr-CA'),
+      profile: profile.name,
+      level: playerState.gameLevel,
+      power,
+      upgrades: upgrades.filter((u) => u.unlocked).length,
+      wordsRead: parentStats.wordsReadCount,
+      wordsWritten: parentStats.wordsWrittenCount,
+      accuracy: parentStats.accuracyRate,
+      playMinutesToday: Math.round(playTime.usedSeconds / 60),
+      toReview: wordsToReview(parentStats.wordReview).slice(0, 20).join(', '),
+    });
+  };
+  const syncRef = useRef(syncNow);
+  syncRef.current = syncNow;
+  useEffect(() => {
+    const id = window.setInterval(() => syncRef.current(), 3 * 60 * 1000);
+    const onHide = () => document.visibilityState === 'hidden' && syncRef.current();
+    document.addEventListener('visibilitychange', onHide);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onHide);
+    };
+  }, []);
 
   // Handler: unlock upgrade via educational challenges
   const handleUnlockUpgrade = (upgradeId: string, results: ChallengeResult[]) => {
@@ -348,24 +466,8 @@ export default function App() {
     }
     setPlayerState((prev) => ({ ...prev, score: prev.score + 100 * results.length }));
 
-    const reads = results.filter((r) => r.mode === 'read');
-    const writes = results.filter((r) => r.mode === 'write');
-    setParentStats((prev) => {
-      const masteredWords = [...prev.masteredWords];
-      results.forEach((r) => {
-        if (!masteredWords.includes(r.word)) masteredWords.push(r.word);
-      });
-      return {
-        ...prev,
-        wordsReadCount: prev.wordsReadCount + reads.length,
-        wordsWrittenCount: prev.wordsWrittenCount + writes.length,
-        challengesCompleted: prev.challengesCompleted + results.length,
-        masteredWords,
-      };
-    });
+    const { reads, writes } = recordReading(results);
 
-    if (reads.length) checkTrophies('read');
-    if (writes.length) checkTrophies('write');
     checkTrophies('upgrade');
 
     // Award educational badges / stickers
@@ -437,6 +539,8 @@ export default function App() {
           onLevelProgress: setLevelProgress,
           onLevelComplete: handleLevelComplete,
           onLevelFailed: handleLevelFailed,
+          onChestFound: handleChestFound,
+          onBossShield: setBossShielded,
         }}
         onFire={handleFireSnowball}
         onScoop={handleManualScoop}
@@ -463,6 +567,8 @@ export default function App() {
         onOpenWorkshop={() => setIsWorkshopOpen(true)}
         onOpenRewards={() => setIsRewardsOpen(true)}
         onOpenParentPortal={() => setIsParentPortalOpen(true)}
+        profileAvatar={loadProfilesStore().profiles.length > 1 ? profile.avatar : null}
+        onSwitchProfile={() => setShowProfilePicker(true)}
         activeMissionHint={missionHint}
         levelProgress={levelProgress}
         timeLeftLabel={formatDuration(playTime.remainingSeconds)}
@@ -488,6 +594,9 @@ export default function App() {
         nextGate={nextGate}
         difficulty={parentStats.currentLevel}
         masteredWords={parentStats.masteredWords}
+        customItems={customItems}
+        review={parentStats.wordReview}
+        voiceEnabled={parentStats.voiceEnabled}
         onUnlockUpgrade={handleUnlockUpgrade}
         onEquipUpgrade={handleEquipUpgrade}
         onAnswer={handleAnswer}
@@ -513,6 +622,9 @@ export default function App() {
         remainingTodaySeconds={playTime.remainingSeconds}
         onChangeDailyLimit={(minutes) => setParentStats((prev) => ({ ...prev, dailyLimitMinutes: minutes }))}
         onAddMinutes={playTime.addMinutes}
+        onChangeCustomWords={(words) => setParentStats((prev) => ({ ...prev, customWords: words }))}
+        onToggleVoice={(enabled) => setParentStats((prev) => ({ ...prev, voiceEnabled: enabled }))}
+        onSyncNow={syncNow}
       />
 
       {/* Level Won / Lost Overlay */}
@@ -527,6 +639,29 @@ export default function App() {
         requiredPower={nextLevelRequired}
         onOpenWorkshop={() => setIsWorkshopOpen(true)}
       />
+
+      {/* Bouton du boss : lire pour briser le bouclier */}
+      {bossShielded && levelProgress?.mode === 'boss' && gameStatus === 'playing' && !readingTask && (
+        <button
+          onClick={handleBreakShield}
+          className="absolute left-1/2 -translate-x-1/2 bottom-28 sm:bottom-6 z-30 px-5 py-3 rounded-2xl bg-gradient-to-r from-indigo-500 to-sky-400 border-4 border-white text-white font-black text-sm shadow-2xl animate-bounce-subtle cursor-pointer"
+        >
+          📖 Lis pour briser le bouclier !
+        </button>
+      )}
+
+      {/* Coffres et boss : défi de lecture */}
+      <ReadingTaskModal
+        task={readingTask}
+        pool={customItems}
+        voiceEnabled={parentStats.voiceEnabled}
+        onAnswer={handleAnswer}
+        onComplete={handleReadingTaskDone}
+        onCancel={() => setReadingTask(null)}
+      />
+
+      {/* Qui joue ? */}
+      <ProfilePicker visible={showProfilePicker && !playTime.isOver} onClose={() => setShowProfilePicker(false)} />
 
       {/* Fin du temps de jeu de la journée */}
       <TimeUpOverlay

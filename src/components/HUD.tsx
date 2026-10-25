@@ -18,6 +18,8 @@ interface HUDProps {
   onOpenParentPortal: () => void;
   activeMissionHint: string;
   levelProgress: LevelProgress | null;
+  profileAvatar: string | null;
+  onSwitchProfile: () => void;
   timeLeftLabel: string;
   timeLow: boolean;
 }
@@ -36,6 +38,8 @@ export const HUD: React.FC<HUDProps> = ({
   onOpenParentPortal,
   activeMissionHint,
   levelProgress,
+  profileAvatar,
+  onSwitchProfile,
   timeLeftLabel,
   timeLow,
 }) => {
@@ -154,6 +158,17 @@ export const HUD: React.FC<HUDProps> = ({
             <Award className="w-5 h-5" />
           </button>
 
+          {/* Changer de joueur */}
+          {profileAvatar && (
+            <button
+              onClick={onSwitchProfile}
+              className="w-10 h-10 rounded-2xl bg-sky-900/90 hover:bg-sky-800 border-2 border-sky-300 text-xl flex items-center justify-center shadow-lg active:scale-90 transition-transform cursor-pointer"
+              title="Changer de joueur"
+            >
+              {profileAvatar}
+            </button>
+          )}
+
           {/* Parent Portal Button */}
           <button
             onClick={onOpenParentPortal}
@@ -173,7 +188,7 @@ export const HUD: React.FC<HUDProps> = ({
           <span className={timeLow ? 'text-rose-300 animate-pulse' : 'text-sky-200'} title="Temps de jeu restant aujourd'hui">
             ⏳ {timeLeftLabel}
           </span>
-          <span>⛄ {levelProgress.killed}/{levelProgress.total}</span>
+          {levelProgress.mode === 'boss' ? <span>👑 Boss</span> : <span>⛄ {levelProgress.killed}/{levelProgress.total}</span>}
           {levelProgress.mode === 'defend' && (
             <>
               <span>⏱️ {levelProgress.timeLeft}s</span>
