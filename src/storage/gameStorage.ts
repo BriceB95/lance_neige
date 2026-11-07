@@ -30,6 +30,10 @@ const DEFAULT_PARENT_STATS: ParentStats = {
   customWords: [],
   wordReview: {},
   voiceEnabled: true,
+  autoLevel: true,
+  recentAnswers: [],
+  dailyDate: '',
+  dailyStreak: 0,
   challengesCompleted: 0,
   snowballsThrown: 0,
   snowCollected: 5,
@@ -65,12 +69,16 @@ export function loadUpgrades(): UpgradeItem[] {
   try {
     const raw = localStorage.getItem(profileKey(STORAGE_KEYS.UPGRADES));
     if (raw) {
-      const saved: Record<string, { unlocked: boolean; equipped: boolean }> = JSON.parse(raw);
-      return INITIAL_UPGRADES.map(u => ({
-        ...u,
-        unlocked: saved[u.id]?.unlocked ?? u.unlocked,
-        equipped: saved[u.id]?.equipped ?? u.equipped
-      }));
+      const saved: Record<string, { unlocked: boolean; equipped: boolean; rank?: number }> = JSON.parse(raw);
+      return INITIAL_UPGRADES.map(u => {
+        const unlocked = saved[u.id]?.unlocked ?? u.unlocked;
+        return {
+          ...u,
+          unlocked,
+          equipped: saved[u.id]?.equipped ?? u.equipped,
+          rank: saved[u.id]?.rank ?? (unlocked ? 1 : 0)
+        };
+      });
     }
   } catch (e) {
     console.warn('Storage read error:', e);
@@ -80,9 +88,9 @@ export function loadUpgrades(): UpgradeItem[] {
 
 export function saveUpgrades(upgrades: UpgradeItem[]): void {
   try {
-    const map: Record<string, { unlocked: boolean; equipped: boolean }> = {};
+    const map: Record<string, { unlocked: boolean; equipped: boolean; rank: number }> = {};
     upgrades.forEach(u => {
-      map[u.id] = { unlocked: u.unlocked, equipped: u.equipped };
+      map[u.id] = { unlocked: u.unlocked, equipped: u.equipped, rank: u.rank };
     });
     localStorage.setItem(profileKey(STORAGE_KEYS.UPGRADES), JSON.stringify(map));
   } catch (e) {

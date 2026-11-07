@@ -1,7 +1,7 @@
 import { LevelConfig } from '../types';
 
 // Puissance exigée aux niveaux 4, 7, 10, 13... (tous les 3 niveaux)
-const POWER_GATES = [20, 45, 80, 130, 190, 260, 300];
+const POWER_GATES = [20, 45, 80, 130, 190, 260, 300, 340, 380, 420, 460, 500, 540];
 
 export function requiredPowerFor(level: number): number {
   if (level < 4 || (level - 1) % 3 !== 0) return 0;
