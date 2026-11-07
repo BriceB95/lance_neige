@@ -6,7 +6,7 @@ import { pickDistractors, pickWordDistractors } from '../data/curriculum';
 import { speakFrench, playSuccessChime, playUpgradeUnlock } from '../audio/soundEffects';
 import { listenOnce, speechRecognitionSupported, spokenMatches } from '../audio/speechRecognition';
 
-export type ChallengeMode = 'read' | 'write' | 'speak';
+export type ChallengeMode = 'read' | 'write' | 'speak' | 'blank' | 'story';
 
 export interface ChallengeResult {
   word: string;
@@ -19,6 +19,7 @@ interface ChallengeRunnerProps {
   items: CurriculumItem[];
   pool: CurriculumItem[]; // mots de l'école (pièges écrits)
   voiceEnabled: boolean;
+  hard?: boolean; // moins d'aide : pas de syllabes, lettres pièges, images proches
   allowedModes?: ChallengeMode[];
   successMessage?: string;
   onAnswer: (correct: boolean, item: CurriculumItem, mode: ChallengeMode) => void;
@@ -32,12 +33,19 @@ const shuffle = <T,>(arr: T[]): T[] => [...arr].sort(() => Math.random() - 0.5);
 const tokensOf = (item: CurriculumItem): string[] =>
   item.type === 'sentence' ? item.content.split(' ') : Array.from(item.content);
 
+// Les phrases à trou et les histoires ont leur propre exercice
+const effectiveMode = (item: CurriculumItem, mode: ChallengeMode): ChallengeMode =>
+  item.type === 'blank' ? 'blank' : item.type === 'story' ? 'story' : mode;
+
+const DECOY_LETTERS = Array.from('AEIOUÉÈSTRLNMCPDB');
+
 export const ChallengeRunner: React.FC<ChallengeRunnerProps> = ({
   title,
   icon,
   items,
   pool,
   voiceEnabled,
+  hard = false,
   allowedModes,
   successMessage,
   onAnswer,
@@ -63,21 +71,31 @@ export const ChallengeRunner: React.FC<ChallengeRunnerProps> = ({
   const [speakFails, setSpeakFails] = useState(0);
 
   const item = items[index];
-  const mode = modes[index];
+  const mode = effectiveMode(item, modes[index]);
   // Sans image (mot de l'école), la lecture se fait en retrouvant le mot écrit entendu
   const listenPick = mode === 'read' && !item.emoji;
   const target = useMemo(() => tokensOf(item), [item]);
   const scrambled = useMemo(() => {
-    let s = shuffle(target.map((t, i) => ({ t, i })));
-    for (let tries = 0; tries < 5 && target.length > 1 && s.every((x, k) => x.t === target[k]); tries++) {
+    const tokens = target.map((t, i) => ({ t, i }));
+    // Dictée difficile : lettres ou mots pièges en plus
+    if (hard && item.type === 'word') {
+      for (let k = 0; k < 2; k++) tokens.push({ t: DECOY_LETTERS[Math.floor(Math.random() * DECOY_LETTERS.length)], i: -1 });
+    } else if (hard && item.type === 'sentence') {
+      const decoys = ['le', 'la', 'les', 'un', 'des', 'et', 'est', 'sont', 'dans'].filter((w) => !target.includes(w));
+      tokens.push({ t: decoys[Math.floor(Math.random() * decoys.length)], i: -1 });
+    }
+    let s = shuffle(tokens);
+    for (let tries = 0; tries < 5 && target.length > 1 && s.every((x, k) => k >= target.length || x.t === target[k]); tries++) {
       s = shuffle(s);
     }
     return s;
-  }, [target]);
-  const choices = useMemo(
-    () => shuffle(item.emoji ? [item.emoji, ...pickDistractors(item)] : [item.content, ...pickWordDistractors(item, pool)]),
-    [item, pool]
-  );
+  }, [target, hard, item.type]);
+  const choices = useMemo(() => {
+    if (item.blank) return shuffle(item.blank.options);
+    if (item.story) return shuffle(item.story.options);
+    return shuffle(item.emoji ? [item.emoji, ...pickDistractors(item, 2, hard)] : [item.content, ...pickWordDistractors(item, pool)]);
+  }, [item, pool, hard]);
+  const answer = item.blank?.answer ?? item.story?.answer ?? (item.emoji || item.content);
 
   useEffect(() => {
     setPicked([]);
@@ -101,7 +119,7 @@ export const ChallengeRunner: React.FC<ChallengeRunnerProps> = ({
       } else {
         playUpgradeUnlock();
         confetti({ particleCount: 120, spread: 90, origin: { y: 0.5 } });
-        onComplete(items.map((it, i) => ({ word: it.content, mode: modes[i] })));
+        onComplete(items.map((it, i) => ({ word: it.content, mode: effectiveMode(it, modes[i]) })));
       }
     }, 1300);
   };
@@ -116,14 +134,16 @@ export const ChallengeRunner: React.FC<ChallengeRunnerProps> = ({
 
   const handleChoice = (choice: string) => {
     if (feedback?.ok) return;
-    const answer = item.emoji || item.content;
     if (choice === answer) {
       setWrongChoice(null);
       succeed();
-    } else {
-      setWrongChoice(choice);
-      fail(listenPick ? 'Ce n\'est pas ce mot. Écoute encore et regarde bien les lettres !' : 'Ce n\'est pas cette image. Relis bien, syllabe par syllabe !');
+      return;
     }
+    setWrongChoice(choice);
+    if (mode === 'blank') fail(`Pas tout à fait. ${item.explanation ?? ''}`);
+    else if (mode === 'story') fail('Ce n\'est pas ça. Relis bien l\'histoire !');
+    else if (listenPick) fail('Ce n\'est pas ce mot. Écoute encore et regarde bien les lettres !');
+    else fail('Ce n\'est pas cette image. Relis bien, syllabe par syllabe !');
   };
 
   const handleSpeak = async () => {
@@ -174,10 +194,16 @@ export const ChallengeRunner: React.FC<ChallengeRunnerProps> = ({
 
   const sep = item.type === 'sentence' ? 'gap-1.5' : 'gap-1';
   const slotSize = item.type === 'sentence' ? 'px-2 h-11 min-w-[44px] text-base' : 'w-10 h-12 sm:w-11 sm:h-14 text-xl sm:text-2xl';
-  const modeLabel = mode === 'write' ? '✍️ Écriture' : mode === 'speak' ? '🎤 Lecture à voix haute' : '📖 Lecture';
+  const modeLabel = {
+    write: '✍️ Écriture',
+    speak: '🎤 Lecture à voix haute',
+    read: '📖 Lecture',
+    blank: '🧩 Phrase à compléter',
+    story: '📜 Histoire',
+  }[mode];
 
   // Le mot à lire, découpé en syllabes cliquables si possible
-  const readingText = item.syllables ? (
+  const readingText = item.syllables && !hard ? (
     <div className="flex justify-center flex-wrap gap-2 my-3">
       {item.syllables.map((syl, i) => (
         <button
@@ -215,7 +241,7 @@ export const ChallengeRunner: React.FC<ChallengeRunnerProps> = ({
         <p className="text-xs text-amber-200 font-medium flex-1">💡 {item.hint}</p>
         {showListen && (
           <button
-            onClick={() => speakFrench(item.content)}
+            onClick={() => speakFrench(item.story ? item.story.text : item.content)}
             className="flex items-center gap-1 bg-cyan-600 hover:bg-cyan-500 px-3 py-1.5 rounded-lg text-xs font-bold active:scale-90 transition-transform cursor-pointer"
           >
             <Volume2 className="w-4 h-4" />
@@ -223,6 +249,68 @@ export const ChallengeRunner: React.FC<ChallengeRunnerProps> = ({
           </button>
         )}
       </div>
+
+      {mode === 'blank' && item.blank && (
+        <div className="text-center">
+          <p className="text-xs text-sky-300 font-semibold">Lis la phrase et choisis le mot qui manque !</p>
+          <div className="my-3 p-3 rounded-2xl bg-white/10 border-2 border-cyan-400 text-xl sm:text-2xl font-extrabold">
+            {item.blank.text.split('___').map((part, i, arr) => (
+              <React.Fragment key={i}>
+                {part}
+                {i < arr.length - 1 && (
+                  <span className={`inline-block min-w-[70px] mx-1 px-2 rounded-lg border-b-4 ${feedback?.ok ? 'text-emerald-300 border-emerald-300' : 'text-amber-300 border-amber-300'}`}>
+                    {feedback?.ok ? item.blank!.answer : '?'}
+                  </span>
+                )}
+              </React.Fragment>
+            ))}
+          </div>
+          <div className="flex flex-wrap justify-center gap-2 my-2">
+            {choices.map((c) => (
+              <button
+                key={c}
+                onClick={() => handleChoice(c)}
+                className={`px-5 py-3 rounded-2xl text-xl font-black border-4 transition-all cursor-pointer active:scale-95 ${
+                  feedback?.ok && c === answer
+                    ? 'bg-emerald-500/40 border-emerald-300'
+                    : wrongChoice === c
+                    ? 'bg-rose-500/30 border-rose-400 opacity-60'
+                    : 'bg-white/10 border-sky-400/60 hover:border-amber-300'
+                }`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {mode === 'story' && item.story && (
+        <div className="text-center">
+          <div className="my-2 p-3 rounded-2xl bg-white/10 border-2 border-cyan-400 text-left text-base sm:text-lg font-semibold leading-relaxed">
+            <span className="text-3xl float-right ml-2">{item.emoji}</span>
+            {item.story.text}
+          </div>
+          <p className="text-sm font-black text-amber-200 my-2">❓ {item.story.question}</p>
+          <div className="flex flex-col gap-2">
+            {choices.map((c) => (
+              <button
+                key={c}
+                onClick={() => handleChoice(c)}
+                className={`px-4 py-2.5 rounded-2xl text-sm sm:text-base font-bold border-4 transition-all cursor-pointer active:scale-95 ${
+                  feedback?.ok && c === answer
+                    ? 'bg-emerald-500/40 border-emerald-300'
+                    : wrongChoice === c
+                    ? 'bg-rose-500/30 border-rose-400 opacity-60'
+                    : 'bg-white/10 border-sky-400/60 hover:border-amber-300'
+                }`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {mode === 'read' && listenPick && (
         <div className="text-center">

@@ -8,11 +8,11 @@ import { RewardsModal } from './components/RewardsModal';
 import { CelebrationOverlay } from './components/CelebrationOverlay';
 import { LevelOverlay } from './components/LevelOverlay';
 import { getLevelConfig, requiredPowerFor } from './data/levels';
-import { computeLook, computePower, computeRobotStats } from './data/upgrades';
+import { computeLook, computePower, computeRobotStats, rankEffect } from './data/upgrades';
 import { ChallengeMode, ChallengeResult } from './components/ChallengeRunner';
 import { ReadingTask, ReadingTaskModal } from './components/ReadingTaskModal';
 import { ProfilePicker } from './components/ProfilePicker';
-import { buildCustomItems, pickChallenges, updateReview, wordsToReview } from './data/curriculum';
+import { LEVEL_LABELS, LEVEL_ORDER, adjustLevel, buildCustomItems, isHardLevel, pickChallenges, todayKey, updateReview, wordsToReview } from './data/curriculum';
 import { currentProfile, loadProfilesStore, needsProfileChoice } from './storage/profiles';
 import { flushToSheets, isValidSheetsUrl, queueAnswer } from './sync/sheetsSync';
 import { TimeUpOverlay } from './components/TimeUpOverlay';
@@ -287,6 +287,24 @@ export default function App() {
   const handleReadingTaskDone = (task: ReadingTask, results: ChallengeResult[]) => {
     setReadingTask(null);
     recordReading(results);
+    if (task.kind === 'daily') {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const streak = parentStats.dailyDate === yesterday.toLocaleDateString('fr-CA') ? parentStats.dailyStreak + 1 : 1;
+      setParentStats((prev) => ({ ...prev, dailyDate: todayKey(), dailyStreak: streak }));
+      setPlayerState((prev) => ({
+        ...prev,
+        score: prev.score + 300,
+        stars: prev.stars + 5,
+        snowAmmo: stats.maxSnow,
+        health: stats.maxHealth,
+      }));
+      sceneRef.current?.activateBoost(30);
+      const msg = `Défi du jour réussi ! ${streak} jour${streak > 1 ? 's' : ''} d'affilée !`;
+      setMissionHint(`🌟 ${msg} Neige et énergie au maximum, super-tir 30 s !`);
+      speakFrench(`${msg} Super-tir pendant 30 secondes !`);
+      return;
+    }
     if (task.kind === 'boss') {
       sceneRef.current?.breakBossShield(15);
       setMissionHint('Le bouclier est brisé ! Vite, lance tes boules ! 💥');
@@ -389,6 +407,13 @@ export default function App() {
         answersCorrect,
         accuracyRate: Math.round((answersCorrect / answersTotal) * 100),
         wordReview: updateReview(prev.wordReview, item.content, correct),
+        // Niveau automatique selon les dernières réponses
+        ...(prev.autoLevel
+          ? (() => {
+              const adj = adjustLevel(prev.currentLevel, prev.recentAnswers, correct);
+              return { currentLevel: adj.level, recentAnswers: adj.recent };
+            })()
+          : {}),
       };
     });
     if (isValidSheetsUrl(loadProfilesStore().settings.sheetsUrl)) queueAnswer(profile.name, item.content, mode, correct);
@@ -452,7 +477,7 @@ export default function App() {
     const isLook = upgrade?.paint !== undefined || upgrade?.crown;
     setUpgrades((prev) =>
       prev.map((u) => {
-        if (u.id === upgradeId) return { ...u, unlocked: true, equipped: true };
+        if (u.id === upgradeId) return { ...u, unlocked: true, equipped: u.rank === 0 ? true : u.equipped, rank: u.rank + 1 };
         // Une seule peinture portée à la fois
         if (upgrade?.paint !== undefined && u.paint !== undefined) return { ...u, equipped: false };
         return u;
@@ -461,7 +486,7 @@ export default function App() {
 
     // L'énergie gagnée par l'amélioration est ajoutée tout de suite
     if (upgrade?.stats.maxHealth) {
-      const bonus = upgrade.stats.maxHealth;
+      const bonus = Math.round(upgrade.stats.maxHealth * (rankEffect(upgrade.rank + 1) - rankEffect(upgrade.rank)));
       setPlayerState((prev) => ({ ...prev, health: prev.health + bonus }));
     }
     setPlayerState((prev) => ({ ...prev, score: prev.score + 100 * results.length }));
@@ -508,10 +533,45 @@ export default function App() {
 
   // Handler: update difficulty level from parent portal
   const handleUpdateLevel = (level: DifficultyLevel) => {
-    setParentStats((prev) => ({ ...prev, currentLevel: level }));
+    setParentStats((prev) => ({ ...prev, currentLevel: level, recentAnswers: [] }));
     if (level === 'cp1') setTerrainTheme('snow-forest');
     else if (level === 'cp2') setTerrainTheme('ice-plain');
-    else if (level === 'ce1') setTerrainTheme('crystal-valley');
+    else setTerrainTheme('crystal-valley');
+  };
+
+  // Annonce les changements de niveau automatiques, une fois l'Atelier ou le défi refermé
+  const prevLevelRef = useRef(parentStats.currentLevel);
+  const pendingLevelMsg = useRef<{ msg: string; up: boolean } | null>(null);
+  useEffect(() => {
+    const prev = prevLevelRef.current;
+    prevLevelRef.current = parentStats.currentLevel;
+    if (prev !== parentStats.currentLevel && !isParentPortalOpen) {
+      const up = LEVEL_ORDER.indexOf(parentStats.currentLevel) > LEVEL_ORDER.indexOf(prev);
+      const label = LEVEL_LABELS[parentStats.currentLevel];
+      pendingLevelMsg.current = {
+        up,
+        msg: up ? `Bravo ! Tu passes au niveau ${label} !` : `On revient au niveau ${label} pour bien s'entraîner.`,
+      };
+    }
+    if (pendingLevelMsg.current && !isWorkshopOpen && !readingTask) {
+      const { msg, up } = pendingLevelMsg.current;
+      pendingLevelMsg.current = null;
+      setTimeout(() => {
+        setMissionHint(`${up ? '🚀' : '💪'} ${msg}`);
+        speakFrench(msg);
+      }, 600);
+    }
+  }, [parentStats.currentLevel, isWorkshopOpen, readingTask]);
+
+  // Défi du jour : 3 exercices, une fois par jour, avec une série de jours d'affilée
+  const dailyDone = parentStats.dailyDate === todayKey();
+  const handleStartDaily = () => {
+    const items = pickChallenges(parentStats.currentLevel, 3, parentStats.masteredWords, {
+      custom: customItems,
+      review: parentStats.wordReview,
+    });
+    speakFrench('Voici le défi du jour !');
+    setReadingTask({ kind: 'daily', items, key: Date.now() });
   };
 
   // Handler: reset all game data
@@ -625,6 +685,7 @@ export default function App() {
         onChangeCustomWords={(words) => setParentStats((prev) => ({ ...prev, customWords: words }))}
         onToggleVoice={(enabled) => setParentStats((prev) => ({ ...prev, voiceEnabled: enabled }))}
         onSyncNow={syncNow}
+        onToggleAutoLevel={(enabled) => setParentStats((prev) => ({ ...prev, autoLevel: enabled, recentAnswers: [] }))}
       />
 
       {/* Level Won / Lost Overlay */}
@@ -639,6 +700,17 @@ export default function App() {
         requiredPower={nextLevelRequired}
         onOpenWorkshop={() => setIsWorkshopOpen(true)}
       />
+
+      {/* Défi du jour */}
+      {!dailyDone && gameStatus === 'playing' && !readingTask && (
+        <button
+          onClick={handleStartDaily}
+          className="absolute right-3 top-28 sm:top-24 z-30 px-3 py-2 rounded-2xl bg-gradient-to-r from-amber-400 to-pink-500 border-2 border-white text-slate-950 font-black text-xs shadow-xl animate-bounce-subtle cursor-pointer"
+        >
+          🌟 Défi du jour
+          {parentStats.dailyStreak > 0 && <span className="block text-[10px]">🔥 série : {parentStats.dailyStreak}</span>}
+        </button>
+      )}
 
       {/* Bouton du boss : lire pour briser le bouclier */}
       {bossShielded && levelProgress?.mode === 'boss' && gameStatus === 'playing' && !readingTask && (
@@ -655,6 +727,7 @@ export default function App() {
         task={readingTask}
         pool={customItems}
         voiceEnabled={parentStats.voiceEnabled}
+        hard={isHardLevel(parentStats.currentLevel)}
         onAnswer={handleAnswer}
         onComplete={handleReadingTaskDone}
         onCancel={() => setReadingTask(null)}

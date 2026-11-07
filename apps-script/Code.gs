@@ -106,6 +106,8 @@ function num_(v) {
 function modeLabel_(mode) {
   if (mode === 'write') return '✍️ Écriture';
   if (mode === 'speak') return '🎤 Lecture à voix haute';
+  if (mode === 'blank') return '🧩 Phrase à compléter';
+  if (mode === 'story') return '📜 Histoire';
   return '📖 Lecture';
 }
 

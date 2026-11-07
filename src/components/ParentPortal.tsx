@@ -17,6 +17,7 @@ interface ParentPortalProps {
   onChangeCustomWords: (words: string[]) => void;
   onToggleVoice: (enabled: boolean) => void;
   onSyncNow: () => Promise<boolean>;
+  onToggleAutoLevel: (enabled: boolean) => void;
 }
 
 export const ParentPortal: React.FC<ParentPortalProps> = ({
@@ -32,6 +33,7 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
   onChangeCustomWords,
   onToggleVoice,
   onSyncNow,
+  onToggleAutoLevel,
 }) => {
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [gateAnswer, setGateAnswer] = useState('');
@@ -152,14 +154,29 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
 
             {/* Curriculum Difficulty Selector */}
             <div className="bg-slate-800/50 p-3.5 rounded-2xl border border-slate-700/80">
-              <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
-                Niveau Scolaire Recommandé
-              </h4>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Niveau scolaire</h4>
+                <button
+                  onClick={() => onToggleAutoLevel(!stats.autoLevel)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer ${
+                    stats.autoLevel ? 'bg-emerald-600 text-white' : 'bg-slate-700 text-slate-300'
+                  }`}
+                >
+                  Automatique : {stats.autoLevel ? 'oui' : 'non'}
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-400 mb-2">
+                {stats.autoLevel
+                  ? 'Le niveau monte au-delà de 85 % de réussite sur les 15 dernières réponses et descend sous 60 %.'
+                  : 'Le niveau reste celui que vous choisissez.'}
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                 {[
-                  { id: 'cp1', label: 'CP Début', desc: 'Syllabes simples (RO-BOT, NEI-GE)' },
-                  { id: 'cp2', label: 'CP Fin', desc: 'Sons complexes (OU, OI, ÉTOILE)' },
-                  { id: 'ce1', label: 'CE1', desc: 'Phrases & Orthographe (CHÂTEAU)' },
+                  { id: 'cp1', label: 'CP début', desc: 'Syllabes simples (RO-BOT)' },
+                  { id: 'cp2', label: 'CP fin', desc: 'Sons OU, OI, CH, EAU' },
+                  { id: 'ce1', label: 'CE1', desc: 'GN, ILL, PH • a/à, et/est' },
+                  { id: 'ce1plus', label: 'CE1+', desc: 'Mots longs, son/sont, pluriels, histoires' },
+                  { id: 'ce2', label: 'CE2', desc: 'Conjugaison, ou/où, histoires, moins d\'aide' },
                 ].map((lvl) => (
                   <button
                     key={lvl.id}

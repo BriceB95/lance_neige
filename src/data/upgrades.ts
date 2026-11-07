@@ -123,8 +123,36 @@ export const INITIAL_UPGRADES: UpgradeItem[] = DEFS.map(([id, tier, category, ic
     crown: extra?.crown,
     unlocked: false,
     equipped: false,
+    rank: 0,
   };
 });
+
+// Effet et puissance selon le nombre d'étoiles (0 à 3)
+const RANK_EFFECT = [0, 1, 1.6, 2.2];
+const RANK_POWER = [0, 1, 1.5, 2];
+
+/** Les styles n'ont qu'une étoile ; les autres améliorations montent jusqu'à ★★★ */
+export function maxRank(u: UpgradeItem): number {
+  return u.category === 'style' ? 1 : 3;
+}
+
+/** Niveau de jeu requis pour obtenir une étoile donnée */
+export function rankMinLevel(u: UpgradeItem, rank: number): number {
+  return tierMinLevel(u.tier) + (rank - 1) * 5;
+}
+
+/** Nombre de défis à réussir pour obtenir une étoile donnée */
+export function rankChallenges(u: UpgradeItem, rank: number): number {
+  return u.challenges + (rank - 1);
+}
+
+export function rankPower(u: UpgradeItem, rank: number): number {
+  return Math.round(u.power * RANK_POWER[rank]);
+}
+
+export function rankEffect(rank: number): number {
+  return RANK_EFFECT[rank];
+}
 
 export function tierMinLevel(tier: number): number {
   return TIERS[tier - 1]?.minLevel ?? 1;
@@ -153,17 +181,27 @@ export function describeBonus(u: UpgradeItem): string {
 export function computeRobotStats(upgrades: UpgradeItem[]): RobotStats {
   const stats = { ...BASE_STATS };
   for (const u of upgrades) {
-    if (!u.unlocked) continue;
+    if (u.rank <= 0) continue;
     for (const key of Object.keys(u.stats) as (keyof RobotStats)[]) {
-      stats[key] += u.stats[key] ?? 0;
+      // Le nombre de boules par tir ne grandit pas avec les étoiles
+      const factor = key === 'multishot' ? 1 : RANK_EFFECT[u.rank];
+      stats[key] += (u.stats[key] ?? 0) * factor;
     }
   }
-  stats.armor = Math.min(60, stats.armor);
+  stats.damage = Math.round(stats.damage * 10) / 10;
+  stats.maxSnow = Math.round(stats.maxSnow);
+  stats.snowPerPile = Math.round(stats.snowPerPile);
+  stats.maxHealth = Math.round(stats.maxHealth);
+  stats.heartHeal = Math.round(stats.heartHeal);
+  stats.armor = Math.min(60, Math.round(stats.armor));
+  stats.speed = Math.min(2.2, stats.speed);
+  stats.ballSize = Math.min(2.2, stats.ballSize);
+  stats.pickupRadius = Math.min(4.5, stats.pickupRadius);
   return stats;
 }
 
 export function computePower(upgrades: UpgradeItem[]): number {
-  return upgrades.reduce((sum, u) => sum + (u.unlocked ? u.power : 0), BASE_POWER);
+  return upgrades.reduce((sum, u) => sum + rankPower(u, u.rank), BASE_POWER);
 }
 
 /** Apparence : peinture équipée (une seule à la fois) et couronne */

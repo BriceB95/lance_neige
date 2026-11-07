@@ -1,16 +1,18 @@
-export type DifficultyLevel = 'cp1' | 'cp2' | 'ce1';
+export type DifficultyLevel = 'cp1' | 'cp2' | 'ce1' | 'ce1plus' | 'ce2';
 export type TerrainTheme = 'snow-forest' | 'ice-plain' | 'crystal-valley';
 
 export interface CurriculumItem {
   id: string;
   level: DifficultyLevel;
-  type: 'word' | 'sentence';
+  type: 'word' | 'sentence' | 'blank' | 'story';
   content: string; // Le texte à lire ou écrire
   emoji: string; // Image associée (vide pour les mots ajoutés par le parent)
   hint: string;
   syllables?: string[]; // ex. ["RO", "BOT"]
   explanation?: string;
   custom?: boolean; // mot de l'école saisi par le parent
+  blank?: { text: string; answer: string; options: string[] }; // phrase à trou (homophones, accords)
+  story?: { text: string; question: string; answer: string; options: string[] }; // compréhension
 }
 
 export interface ReviewEntry {
@@ -48,6 +50,7 @@ export interface UpgradeItem {
   crown?: boolean;
   unlocked: boolean;
   equipped: boolean;
+  rank: number; // 0 = verrouillé, 1 à 3 étoiles
 }
 
 export interface Trophy {
@@ -87,6 +90,10 @@ export interface ParentStats {
   customWords: string[]; // mots de la semaine donnés par l'école
   wordReview: Record<string, ReviewEntry>; // révision espacée
   voiceEnabled: boolean; // lecture à voix haute au micro
+  autoLevel: boolean; // niveau scolaire ajusté automatiquement
+  recentAnswers: boolean[]; // dernières réponses (niveau automatique)
+  dailyDate: string; // dernier défi du jour réussi (AAAA-MM-JJ)
+  dailyStreak: number; // jours d'affilée
   challengesCompleted: number;
   snowballsThrown: number;
   snowCollected: number;

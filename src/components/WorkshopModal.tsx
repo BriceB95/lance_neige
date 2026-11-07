@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { X, Wrench, Lock, CheckCircle, Zap } from 'lucide-react';
 import { CurriculumItem, DifficultyLevel, ReviewEntry, UpgradeCategory, UpgradeItem } from '../types';
-import { CATEGORIES, describeBonus, tierMinLevel } from '../data/upgrades';
-import { pickChallenges } from '../data/curriculum';
+import { CATEGORIES, describeBonus, maxRank, rankChallenges, rankMinLevel, rankPower } from '../data/upgrades';
+import { isHardLevel, pickChallenges } from '../data/curriculum';
 import { ChallengeMode, ChallengeRunner, ChallengeResult } from './ChallengeRunner';
 
 interface WorkshopModalProps {
@@ -46,12 +46,15 @@ export const WorkshopModal: React.FC<WorkshopModalProps> = ({
   const startChallenge = (upgrade: UpgradeItem) => {
     setChallenge({
       upgrade,
-      items: pickChallenges(difficulty, upgrade.challenges, masteredWords, { custom: customItems, review }),
+      items: pickChallenges(difficulty, rankChallenges(upgrade, upgrade.rank + 1), masteredWords, { custom: customItems, review }),
       key: Date.now(),
     });
   };
 
   const unlockedCount = upgrades.filter((u) => u.unlocked).length;
+  const starsEarned = upgrades.reduce((sum, u) => sum + u.rank, 0);
+  const starsTotal = upgrades.reduce((sum, u) => sum + maxRank(u), 0);
+  const stars = (u: UpgradeItem) => '★'.repeat(u.rank) + '☆'.repeat(maxRank(u) - u.rank);
   const visible = upgrades.filter((u) => u.category === category).sort((a, b) => a.tier - b.tier);
   const gateMissing = nextGate ? Math.max(0, nextGate.required - power) : 0;
 
@@ -84,6 +87,9 @@ export const WorkshopModal: React.FC<WorkshopModalProps> = ({
           <span className="bg-sky-800/80 px-3 py-1.5 rounded-full border border-sky-500/50">
             🔧 {unlockedCount} / {upgrades.length} améliorations
           </span>
+          <span className="bg-sky-800/80 px-3 py-1.5 rounded-full border border-sky-500/50 text-yellow-200">
+            ★ {starsEarned} / {starsTotal} étoiles
+          </span>
           {nextGate && (
             <span
               className={`px-3 py-1.5 rounded-full border ${
@@ -104,7 +110,12 @@ export const WorkshopModal: React.FC<WorkshopModalProps> = ({
             items={challenge.items}
             pool={customItems}
             voiceEnabled={voiceEnabled}
-            successMessage={`Bravo ! ${challenge.upgrade.name} est débloqué !`}
+            hard={isHardLevel(difficulty)}
+            successMessage={
+              challenge.upgrade.rank === 0
+                ? `Bravo ! ${challenge.upgrade.name} est débloqué !`
+                : `Bravo ! ${challenge.upgrade.name} passe à ${'★'.repeat(challenge.upgrade.rank + 1)} !`
+            }
             onAnswer={onAnswer}
             onCancel={() => setChallenge(null)}
             onComplete={(results) => {
@@ -117,7 +128,8 @@ export const WorkshopModal: React.FC<WorkshopModalProps> = ({
             <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
               {CATEGORIES.map((c) => {
                 const total = upgrades.filter((u) => u.category === c.id);
-                const done = total.filter((u) => u.unlocked).length;
+                const done = total.reduce((sum, u) => sum + u.rank, 0);
+                const max = total.reduce((sum, u) => sum + maxRank(u), 0);
                 return (
                   <button
                     key={c.id}
@@ -129,7 +141,7 @@ export const WorkshopModal: React.FC<WorkshopModalProps> = ({
                     <span className="text-lg leading-none">{c.icon}</span>
                     {c.label}
                     <span className="text-[10px] opacity-80">
-                      {done}/{total.length}
+                      ★ {done}/{max}
                     </span>
                   </button>
                 );
@@ -138,13 +150,19 @@ export const WorkshopModal: React.FC<WorkshopModalProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {visible.map((u) => {
-                const minLevel = tierMinLevel(u.tier);
-                const levelLocked = gameLevel < minLevel;
+                const nextRank = u.rank + 1;
+                const canRankUp = nextRank <= maxRank(u);
+                const minLevel = canRankUp ? rankMinLevel(u, nextRank) : 0;
+                const levelLocked = canRankUp && gameLevel < minLevel;
+                const needed = canRankUp ? rankChallenges(u, nextRank) : 0;
+                const isLook = u.paint !== undefined || u.crown;
                 return (
                   <div
                     key={u.id}
                     className={`p-3 rounded-2xl border-2 flex flex-col gap-2 ${
-                      u.unlocked
+                      u.rank >= maxRank(u)
+                        ? 'bg-amber-900/30 border-amber-300'
+                        : u.unlocked
                         ? 'bg-sky-800/60 border-cyan-400'
                         : levelLocked
                         ? 'bg-slate-900/60 border-slate-700 opacity-60'
@@ -158,43 +176,46 @@ export const WorkshopModal: React.FC<WorkshopModalProps> = ({
                           <h3 className="font-bold text-sm">{u.name}</h3>
                           {u.unlocked && <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />}
                         </div>
-                        <p className="text-[11px] text-sky-200 leading-snug">{u.description}</p>
+                        <div className="text-yellow-300 text-sm leading-none tracking-widest">{stars(u)}</div>
+                        <p className="text-[11px] text-sky-200 leading-snug mt-0.5">{u.description}</p>
                         <div className="flex flex-wrap gap-1 mt-1">
                           <span className="text-[10px] font-semibold text-amber-300 bg-amber-950/50 px-1.5 py-0.5 rounded border border-amber-400/30">
                             {describeBonus(u)}
+                            {!isLook && u.rank >= 2 && Object.keys(u.stats).some((k) => k !== 'multishot') && ` (×${u.rank === 2 ? '1,6' : '2,2'})`}
                           </span>
                           <span className="text-[10px] font-semibold text-yellow-200 bg-yellow-900/40 px-1.5 py-0.5 rounded">
-                            ⚡ +{u.power}
+                            ⚡ {u.rank > 0 ? rankPower(u, u.rank) : `+${u.power}`}
                           </span>
                         </div>
                       </div>
                     </div>
 
-                    {u.unlocked ? (
-                      u.paint !== undefined || u.crown ? (
-                        <button
-                          onClick={() => onEquipUpgrade(u.id)}
-                          className={`w-full py-1.5 rounded-xl font-bold text-xs cursor-pointer ${
-                            u.equipped ? 'bg-emerald-500 text-white' : 'bg-cyan-500 hover:bg-cyan-400 text-sky-950'
-                          }`}
-                        >
-                          {u.equipped ? 'Porté par le robot ✓' : 'Mettre sur le robot'}
-                        </button>
-                      ) : (
-                        <div className="w-full py-1.5 rounded-xl font-bold text-xs text-center bg-emerald-600/40 text-emerald-100">
-                          Installé sur le robot ✓
+                    {u.unlocked && isLook && (
+                      <button
+                        onClick={() => onEquipUpgrade(u.id)}
+                        className={`w-full py-1.5 rounded-xl font-bold text-xs cursor-pointer ${
+                          u.equipped ? 'bg-emerald-500 text-white' : 'bg-cyan-500 hover:bg-cyan-400 text-sky-950'
+                        }`}
+                      >
+                        {u.equipped ? 'Porté par le robot ✓' : 'Mettre sur le robot'}
+                      </button>
+                    )}
+                    {!canRankUp ? (
+                      !isLook && (
+                        <div className="w-full py-1.5 rounded-xl font-bold text-xs text-center bg-amber-500/30 text-amber-100">
+                          Maximum atteint ★★★
                         </div>
                       )
                     ) : levelLocked ? (
                       <div className="w-full py-1.5 rounded-xl font-bold text-xs text-center bg-slate-800 text-slate-300 flex items-center justify-center gap-1">
-                        <Lock className="w-3.5 h-3.5" /> Disponible au niveau {minLevel}
+                        <Lock className="w-3.5 h-3.5" /> {u.rank === 0 ? 'Disponible' : `${'★'.repeat(nextRank)} disponible`} au niveau {minLevel}
                       </div>
                     ) : (
                       <button
                         onClick={() => startChallenge(u)}
                         className="w-full py-2 rounded-xl font-extrabold text-xs bg-gradient-to-r from-amber-400 to-orange-500 hover:brightness-110 text-slate-950 active:scale-95 transition-all cursor-pointer"
                       >
-                        Débloquer : {u.challenges} défi{u.challenges > 1 ? 's' : ''} 📖✍️
+                        {u.rank === 0 ? 'Débloquer' : `Passer à ${'★'.repeat(nextRank)}`} : {needed} défi{needed > 1 ? 's' : ''} 📖✍️
                       </button>
                     )}
                   </div>
